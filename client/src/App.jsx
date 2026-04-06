@@ -2,9 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
 // Pages
-import Home from './pages/Home';
 import Login from './pages/Login';
 import Entry from './pages/Entry';
+import AutoEntry from './pages/AutoEntry';
 import CustomerTickets from './pages/CustomerTickets';
 import Exit from './pages/Exit';
 import AdminDashboard from './pages/AdminDashboard';
@@ -25,7 +25,7 @@ const ProtectedRoute = ({ children, allowedRoles = [] }) => {
     }
 
     if (!isAuthenticated) {
-        return <Navigate to="/login" replace />;
+        return <Navigate to="/" replace />;
     }
 
     // Check if user has required role (if roles are specified)
@@ -56,10 +56,9 @@ function App() {
         <AuthProvider>
             <BrowserRouter>
                 <Routes>
-                    {/* Public Routes */}
-                    <Route path="/" element={<Home />} />
+                    {/* Login is the landing page */}
                     <Route
-                        path="/login"
+                        path="/"
                         element={
                             <PublicRoute>
                                 <Login />
@@ -67,6 +66,15 @@ function App() {
                         }
                     />
 
+                    {/* Auto Entry Route */}
+                    <Route
+                        path="/auto-entry"
+                        element={
+                            <PublicRoute>
+                                <AutoEntry />
+                            </PublicRoute>
+                        }
+                    />
                     {/* Protected Customer Routes */}
                     <Route
                         path="/entry"
