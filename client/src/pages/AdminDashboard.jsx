@@ -21,14 +21,9 @@ import {
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
-const AUTO_REPORT_CHECK_INTERVAL_MS = 60 * 1000;
-const FETCH_INTERVAL_MS = 30 * 1000;
-
 const vehicleTypeMap = {
   car: 'Mobil',
   motorcycle: 'Sepeda Motor',
-  truck: 'Truk',
-  suv: 'SUV',
 };
 
 // Raw fetcher passed into the cache layer
@@ -88,40 +83,10 @@ const AdminDashboard = () => {
     });
   }, []);
 
-  // Mount: show cached data instantly, refresh silently if stale
+  // Mount: fetch data on page load
   useEffect(() => {
-    // Immediately check if we have something cached to show without a spinner
-    getCachedDashboard(fetchDashboardData).then(({ stats: s, lostTickets: l, fromCache }) => {
-      if (s !== null) {
-        setStats(s);
-        setLostTickets(l);
-        setLoading(false);
-      }
-      // If data came from cache it might be stale — fire a background refresh
-      if (fromCache) {
-        loadDashboard(true);
-      }
-    }).catch(() => {
-      setLoading(false);
-    });
-
-    // Poll for live updates every 30s while the page is open
-    const interval = setInterval(() => loadDashboard(true), FETCH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    loadDashboard();
   }, [loadDashboard]);
-
-  // Auto-report interval uses in-memory ref, no API call
-  const checkAndFireReport = useCallback(() => {
-    if (!shouldFireAutoReport(regulationsRef.current)) return;
-    markReportDelivered();
-    setReportTriggeredAt(new Date());
-    setShowReportModal(true);
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(checkAndFireReport, AUTO_REPORT_CHECK_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [checkAndFireReport]);
 
   // Close notif dropdown on outside click
   useEffect(() => {
@@ -165,7 +130,7 @@ const AdminDashboard = () => {
     labels: stats?.vehicleDistribution?.map((v) => vehicleTypeMap[v.vehicleType] || v.vehicleType) || [],
     datasets: [{
       data: stats?.vehicleDistribution?.map((v) => v.count) || [],
-      backgroundColor: ['#3b82f6', '#f97316', '#10b981', '#8b5cf6'],
+      backgroundColor: ['#38bdf8', '#f59e0b', '#10b981', '#64748b'],
       borderWidth: 0,
     }],
   };
@@ -173,18 +138,18 @@ const AdminDashboard = () => {
   if (loading) return <Loading fullScreen text="Memuat dashboard..." />;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-[#e8eef7] to-slate-100">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="lg:ml-[260px]">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <header className="bg-white/95 backdrop-blur-sm border-b border-slate-200/80 sticky top-0 z-10 shadow-sm shadow-slate-900/5">
           <div className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
               <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-1.5 rounded-lg hover:bg-gray-100">
                 <i className="fas fa-bars text-gray-600 text-sm"></i>
               </button>
-              <h1 className="text-lg font-bold text-gray-900">Dashboard</h1>
+              <h1 className="text-lg font-bold text-slate-900 font-display tracking-tight">Dashboard</h1>
             </div>
 
             <div className="flex items-center gap-3">
@@ -284,45 +249,45 @@ const AdminDashboard = () => {
         <div className="p-5 space-y-5">
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs">Kendaraan Aktif</p>
                   <p className="text-2xl font-bold text-gray-900 mt-1">{stats?.activeTickets || 0}</p>
                 </div>
-                <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                  <i className="fas fa-car text-blue-600"></i>
+                <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center">
+                  <i className="fas fa-car text-sky-700"></i>
                 </div>
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                  <div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(stats?.occupancyPercent || 0, 100)}%` }}></div>
+                  <div className="bg-gradient-to-r from-[#1e3a5f] to-sky-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(stats?.occupancyPercent || 0, 100)}%` }}></div>
                 </div>
                 <span className="text-xs text-gray-500">{stats?.occupancyPercent || 0}%</span>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs">Slot Tersedia</p>
-                  <p className="text-2xl font-bold text-green-600 mt-1">{stats?.availableSpots || 0}</p>
+                  <p className="text-2xl font-bold text-emerald-600 mt-1">{stats?.availableSpots || 0}</p>
                 </div>
-                <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                  <i className="fas fa-parking text-green-600"></i>
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+                  <i className="fas fa-parking text-emerald-700"></i>
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-2">dari {stats?.maxCapacity || 100}</p>
             </div>
 
-            <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-gray-500 text-xs">Pendapatan Hari Ini</p>
                   <p className="text-xl font-bold text-gray-900 mt-1">{stats?.today?.formattedRevenue || 'Rp. 0'}</p>
                 </div>
-                <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                  <i className="fas fa-wallet text-purple-600"></i>
+                <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <i className="fas fa-wallet text-amber-700"></i>
                 </div>
               </div>
               <p className="text-xs text-gray-500 mt-2">{stats?.today?.payments || 0} transaksi</p>
@@ -352,8 +317,8 @@ const AdminDashboard = () => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-900 text-sm mb-3">Distribusi Kendaraan</h3>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
+              <h3 className="font-semibold text-gray-900 text-sm mb-3 font-display">Distribusi Kendaraan</h3>
               <div className="h-40">
                 {stats?.vehicleDistribution?.length > 0 ? (
                   <Doughnut data={vehicleChartData} options={{ plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, padding: 8 } } }, maintainAspectRatio: false }} />
@@ -363,16 +328,17 @@ const AdminDashboard = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-900 text-sm mb-3">Aksi Cepat</h3>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
+              <h3 className="font-semibold text-gray-900 text-sm mb-3 font-display">Aksi Cepat</h3>
               <div className="space-y-2">
                 {[
-                  { to: '/entry', icon: 'fa-plus', color: 'blue', label: 'Entry', sub: 'Tiket baru' },
-                  { to: '/exit', icon: 'fa-sign-out-alt', color: 'green', label: 'Exit', sub: 'Keluar & bayar' },
-                  { to: '/admin/tickets', icon: 'fa-list', color: 'purple', label: 'Tiket', sub: 'Semua kendaraan' },
-                ].map(({ to, icon, color, label, sub }) => (
-                  <Link key={to} to={to} className={`flex items-center gap-2.5 p-2.5 rounded-lg bg-${color}-50 hover:bg-${color}-100 transition-colors`}>
-                    <div className={`w-8 h-8 rounded bg-${color}-500 flex items-center justify-center`}>
+                  { to: '/entry', icon: 'fa-plus', wrap: 'bg-sky-50 hover:bg-sky-100', iconBg: 'bg-sky-600', label: 'Buat Tiket Manual', sub: 'Tiket baru' },
+                  { to: '/exit', icon: 'fa-sign-out-alt', wrap: 'bg-emerald-50 hover:bg-emerald-100', iconBg: 'bg-emerald-600', label: 'Exit', sub: 'Keluar dan bayar' },
+                  { to: '/admin/tickets', icon: 'fa-list', wrap: 'bg-amber-50 hover:bg-amber-100', iconBg: 'bg-amber-500', label: 'Tiket', sub: 'Semua kendaraan' },
+                  { to: '/auto-entry', icon: 'fa-car-side', wrap: 'bg-gray-50 hover:bg-gray-100', iconBg: 'bg-gray-600', label: 'Buat Tiket Otomatis', sub: 'Masuk otomatis' },
+                ].map(({ to, icon, wrap, iconBg, label, sub }) => (
+                  <Link key={to} to={to} className={`flex items-center gap-2.5 p-2.5 rounded-lg transition-colors ${wrap}`}>
+                    <div className={`w-8 h-8 rounded ${iconBg} flex items-center justify-center`}>
                       <i className={`fas ${icon} text-white text-xs`}></i>
                     </div>
                     <div>
@@ -384,15 +350,15 @@ const AdminDashboard = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-4 shadow-sm">
-              <h3 className="font-semibold text-gray-900 text-sm mb-3">Aktivitas Terbaru</h3>
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
+              <h3 className="font-semibold text-gray-900 text-sm mb-3 font-display">Aktivitas Terbaru</h3>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {stats?.recentActivity?.length > 0 ? (
                   stats.recentActivity.map((activity, index) => (
                     <div key={index} className="flex items-start gap-2 pb-2 border-b border-gray-100 last:border-0">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${
-                        activity.action.includes('PAYMENT') ? 'bg-green-100 text-green-600' :
-                        activity.action.includes('TICKET') ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                        activity.action.includes('PAYMENT') ? 'bg-amber-100 text-amber-700' :
+                        activity.action.includes('TICKET') ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-600'
                       }`}>
                         <i className={`fas ${activity.action.includes('PAYMENT') ? 'fa-money-bill' : activity.action.includes('TICKET') ? 'fa-ticket' : 'fa-circle'}`}></i>
                       </div>
@@ -441,7 +407,7 @@ const AdminDashboard = () => {
                 {[
                   { label: 'Total Hilang', value: lostTickets.length, icon: 'fa-ticket' },
                   { label: 'Motor', value: lostTickets.filter((t) => t.vehicleType === 'motorcycle').length, icon: 'fa-motorcycle' },
-                  { label: 'Mobil / SUV', value: lostTickets.filter((t) => ['car', 'suv', 'truck'].includes(t.vehicleType)).length, icon: 'fa-car' },
+                  { label: 'Mobil', value: lostTickets.filter((t) => t.vehicleType === 'car').length, icon: 'fa-car' },
                 ].map((s) => (
                   <div key={s.label} className="bg-white/10 rounded-lg px-3 py-2 text-center">
                     <i className={`fas ${s.icon} text-white/70 text-xs mb-1 block`}></i>

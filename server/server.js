@@ -7,9 +7,8 @@ const fs = require('fs');
 require('dotenv').config();
 
 const { testConnection } = require('./config/database');
-const { syncDatabase } = require('./models');
+const { syncDatabase, User } = require('./models');
 const { errorHandler, notFoundHandler, logger } = require('./middleware/errorHandler');
-const { apiLimiter } = require('./middleware/rateLimiter');
 const { sanitizeInput } = require('./middleware/validation');
 
 // Import routes
@@ -18,6 +17,8 @@ const ticketRoutes = require('./routes/tickets');
 const paymentRoutes = require('./routes/payments');
 const adminRoutes = require('./routes/admin');
 const exitRoutes = require('./routes/exit');
+const backupRoutes = require('./routes/backup');
+const transactionRoutes = require('./routes/transactions');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,14 +53,11 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Sanitize input
 app.use(sanitizeInput);
-
-// Rate limiting
-app.use('/api', apiLimiter);
 
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -68,7 +66,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.get('/api/health', (req, res) => {
     res.json({
         success: true,
-        message: 'Smart Parking API is running',
+        message: 'API is running',
         timestamp: new Date().toISOString(),
         version: '1.0.0'
     });
@@ -79,7 +77,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/exit', exitRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/transactions', transactionRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/backup', backupRoutes);
 
 // 404 handler
 app.use(notFoundHandler);
@@ -96,9 +96,16 @@ const startServer = async () => {
         // Sync database models
         await syncDatabase();
 
+        // auto seed on first run
+        const userCount = await User.count();
+        if (userCount === 0) {
+            console.log('Seeding database with default data...');
+            await require('./scripts/seedDb').seedData();
+        }
+
         app.listen(PORT, () => {
             console.log(`
-Smart Parking Management System API
+Management System API
 Server running on: http://localhost:${PORT}
 Environment: ${process.env.NODE_ENV || 'development'}
       `);

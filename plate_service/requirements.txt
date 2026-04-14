@@ -1,0 +1,7 @@
+flask
+flask-cors
+ultralytics
+easyocr
+opencv-python-headless
+numpy
+huggingface_hub>=0.20.0

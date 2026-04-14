@@ -5,10 +5,11 @@ const api = axios.create({
     headers: {
         'Content-Type': 'application/json'
     },
-    timeout: 30000
+    timeout: 30000,
+    maxRedirects: 0
 });
 
-// Request interceptor - add auth token
+// Request interceptor add auth token
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token');
@@ -22,7 +23,7 @@ api.interceptors.request.use(
     }
 );
 
-// Response interceptor - handle errors
+// Response interceptor handle errors
 api.interceptors.response.use(
     (response) => response,
     (error) => {
@@ -32,7 +33,7 @@ api.interceptors.response.use(
 
             // Only redirect if not already on login page
             if (window.location.pathname !== '/login') {
-                window.location.href = '/login';
+                window.location.href = '/';
             }
         }
         return Promise.reject(error);
@@ -55,10 +56,23 @@ export const ticketService = {
 };
 
 export const paymentService = {
-    calculate: (params) => api.get('/payments/calculate', { params }),
+    calculate: (params) => {
+        if (params?.barcodeData != null && String(params.barcodeData).length > 0) {
+            return api.post('/payments/calculate', { barcodeData: params.barcodeData });
+        }
+        return api.get('/payments/calculate', { params });
+    },
     process: (data) => api.post('/payments', data),
     get: (identifier) => api.get(`/payments/${identifier}`),
-    getHistory: (params) => api.get('/payments/history', { params })
+    getHistory: (params) => api.get('/payments/history', { params }),
+    refund: (paymentId, data) => api.post(`/payments/${paymentId}/refund`, data)
+};
+
+export const transactionService = {
+    list: (params) => api.get('/transactions', { params }),
+    create: (data) => api.post('/transactions', data),
+    update: (id, data) => api.put(`/transactions/${id}`, data),
+    delete: (id) => api.delete(`/transactions/${id}`)
 };
 
 export const adminService = {
@@ -70,9 +84,6 @@ export const adminService = {
     updateRate: (vehicleType, data) => api.put(`/admin/rates/${vehicleType}`, data),
     getSettings: () => api.get('/admin/settings'),
     updateSettings: (data) => api.put('/admin/settings', data),
-    getBlacklist: () => api.get('/admin/blacklist'),
-    addToBlacklist: (data) => api.post('/admin/blacklist', data),
-    removeFromBlacklist: (id) => api.delete(`/admin/blacklist/${id}`),
     getActivityLogs: (params) => api.get('/admin/activity-logs', { params })
 };
 
@@ -82,4 +93,13 @@ export const authService = {
     getProfile: () => api.get('/auth/profile'),
     updateProfile: (data) => api.put('/auth/profile', data),
     verify: () => api.get('/auth/verify')
+};
+
+export const backupService = {
+    getBackupStatus: () => api.get('/admin/backup/status'),
+    triggerBackup: () => api.post('/admin/backup', {}, { responseType: 'blob' }),
+    importDatabase: (formData) => api.post('/admin/backup/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    }),
+    configureAutoBackup: (data) => api.post('/admin/backup/auto', data)
 };

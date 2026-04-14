@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import QRCode from 'react-qr-code';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import JsBarcode from 'jsbarcode';
 import Sidebar from '../components/common/Sidebar';
 import Loading from '../components/common/Loading';
 import { ticketService } from '../services/api';
@@ -16,28 +18,24 @@ import {
   getCachedActiveTickets,
   invalidateActiveTicketsCache,
 } from '../utils/dashboardCache';
+import { applyAllFilters } from '../utils/filterUtils';
 
-const AUTO_MARK_INTERVAL_MS = 60 * 1000;
-const FETCH_INTERVAL_MS = 30 * 1000;
+const KEBAB_MENU_WIDTH_PX = 176; // ~11rem
 
 const vehicleTypeMap = {
   car: 'Mobil',
   motorcycle: 'Sepeda Motor',
-  truck: 'Truk',
-  suv: 'SUV',
 };
 
-const vehicleTypes = ['car', 'motorcycle', 'truck', 'suv'];
+const vehicleTypes = ['car', 'motorcycle'];
 
 const getVehicleIcon = (type) => ({
-  motorcycle: 'fa-motorcycle', car: 'fa-car', suv: 'fa-car-side', truck: 'fa-truck',
+  motorcycle: 'fa-motorcycle', car: 'fa-car'
 }[type] || 'fa-car');
 
 const getVehicleBadgeColor = (type) => ({
-  motorcycle: 'bg-orange-100 text-orange-700',
-  car: 'bg-blue-100 text-blue-700',
-  suv: 'bg-green-100 text-green-700',
-  truck: 'bg-red-100 text-red-700',
+  motorcycle: 'bg-amber-100 text-amber-800',
+  car: 'bg-sky-100 text-sky-800',
 }[type] || 'bg-gray-100 text-gray-700');
 
 // Stable reference outside the component the cache layer uses this as the
@@ -49,17 +47,17 @@ async function fetchActiveTicketsData() {
   ]);
   return {
     activeTickets: activeRes.data.success ? (activeRes.data.data.tickets || []) : [],
-    lostTickets:   lostRes.data.success  ? (lostRes.data.data.tickets  || []) : [],
+    lostTickets: lostRes.data.success ? (lostRes.data.data.tickets || []) : [],
   };
 }
 
 const ActiveTickets = () => {
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tickets, setTickets] = useState([]);
   const [lostTickets, setLostTickets] = useState([]);
   const [activeTab, setActiveTab] = useState('active');
-  const [printing, setPrinting] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
@@ -67,12 +65,34 @@ const ActiveTickets = () => {
   const [deletingAll, setDeletingAll] = useState(false);
   const [autoMarkingCount, setAutoMarkingCount] = useState(0);
 
+  // Basic search/filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [vehicleFilter, setVehicleFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [sortBy, setSortBy] = useState('recent');
 
+  // Advanced filter states
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [durationRanges, setDurationRanges] = useState([]);
+  const [entryDateFrom, setEntryDateFrom] = useState(null);
+  const [entryDateTo, setEntryDateTo] = useState(null);
+
+  // Kebab menu: open row id + fixed position for portaled panel
+  const [expandedTicketId, setExpandedTicketId] = useState(null);
+  const [kebabMenuPosition, setKebabMenuPosition] = useState(null);
+
+  // Copy tooltip state
+  const [copiedTicketId, setCopiedTicketId] = useState(null);
+
+  // Download state
+  const [downloadingId, setDownloadingId] = useState(null);
+
+  // Entry image state
+  const [entryImageUrl, setEntryImageUrl] = useState(null);
+
   const regulationsRef = useRef(DEFAULT_REGULATIONS);
+  const kebabButtonRef = useRef(null);
+  const kebabMenuPanelRef = useRef(null);
   const [regulationsReady, setRegulationsReady] = useState(false);
 
   // Load regulations via cache (5-min TTL)
@@ -104,11 +124,9 @@ const ActiveTickets = () => {
     }
   }, []);
 
-  // Mount: show cached data instantly, then poll every 30s
+  // Mount: fetch data on page load
   useEffect(() => {
     fetchTickets();
-    const interval = setInterval(() => fetchTickets(true), FETCH_INTERVAL_MS);
-    return () => clearInterval(interval);
   }, [fetchTickets]);
 
   // Auto-Mark-Lost Engine
@@ -151,44 +169,89 @@ const ActiveTickets = () => {
 
   useEffect(() => {
     if (!regulationsReady) return;
-    const autoInterval = setInterval(runAutoMarkLost, AUTO_MARK_INTERVAL_MS);
-    const initTimeout  = setTimeout(runAutoMarkLost, 3000);
-    return () => {
-      clearInterval(autoInterval);
-      clearTimeout(initTimeout);
-    };
+    // Run auto-mark once on mount
+    runAutoMarkLost();
   }, [runAutoMarkLost, regulationsReady]);
+
+  // Position portaled kebab menu under trigger (capture phase scroll: any scrollable ancestor)
+  useLayoutEffect(() => {
+    if (expandedTicketId == null) {
+      setKebabMenuPosition(null);
+      return;
+    }
+    const updatePosition = () => {
+      const el = kebabButtonRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setKebabMenuPosition({
+        top: rect.bottom + 4,
+        left: Math.max(8, rect.right - KEBAB_MENU_WIDTH_PX),
+      });
+    };
+    updatePosition();
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [expandedTicketId]);
+
+  // Close kebab menu on outside click (trigger + portaled panel)
+  useEffect(() => {
+    if (expandedTicketId == null) return;
+    const onPointerDown = (e) => {
+      if (
+        kebabButtonRef.current?.contains(e.target) ||
+        kebabMenuPanelRef.current?.contains(e.target)
+      ) {
+        return;
+      }
+      setExpandedTicketId(null);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [expandedTicketId]);
+
+  // Fetch entry image when modal opens
+  useEffect(() => {
+    const loadEntryImage = async () => {
+      if (showModal && selectedTicket) {
+        try {
+          const response = await ticketService.print(selectedTicket.id);
+          if (response.data.success && response.data.data.plateCaptures && response.data.data.plateCaptures.length > 0) {
+            const firstCapture = response.data.data.plateCaptures[0];
+            if (firstCapture.imagePath) {
+              setEntryImageUrl(`/${firstCapture.imagePath}`);
+            } else {
+              setEntryImageUrl(null);
+            }
+          } else {
+            setEntryImageUrl(null);
+          }
+        } catch (error) {
+          console.error('Failed to load entry image:', error);
+          setEntryImageUrl(null);
+        }
+      } else {
+        setEntryImageUrl(null);
+      }
+    };
+    loadEntryImage();
+  }, [showModal, selectedTicket]);
 
   // Filtering & Sorting
   const filterTickets = useCallback((ticketsToFilter) => {
-    let filtered = [...ticketsToFilter];
-
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(
-        (t) =>
-          t.ticketNumber.toLowerCase().includes(term) ||
-          t.plateNumber.toLowerCase().includes(term)
-      );
-    }
-    if (vehicleFilter !== 'all') filtered = filtered.filter((t) => t.vehicleType === vehicleFilter);
-    if (dateFilter !== 'all') {
-      const now = new Date();
-      filtered = filtered.filter((t) => {
-        const d = new Date(t.entryTime);
-        if (dateFilter === 'today') return d.toDateString() === now.toDateString();
-        if (dateFilter === 'week')  return d >= new Date(now.getTime() - 7 * 86400000);
-        return true;
-      });
-    }
-    filtered.sort((a, b) => {
-      if (sortBy === 'recent')   return new Date(b.entryTime) - new Date(a.entryTime);
-      if (sortBy === 'oldest')   return new Date(a.entryTime) - new Date(b.entryTime);
-      if (sortBy === 'duration') return (Date.now() - new Date(b.entryTime)) - (Date.now() - new Date(a.entryTime));
-      return 0;
+    return applyAllFilters(ticketsToFilter, {
+      searchTerm,
+      vehicleType: vehicleFilter,
+      dateFilter,
+      durationRanges,
+      entryDateFrom,
+      entryDateTo,
+      sortBy
     });
-    return filtered;
-  }, [searchTerm, vehicleFilter, dateFilter, sortBy]);
+  }, [searchTerm, vehicleFilter, dateFilter, durationRanges, entryDateFrom, entryDateTo, sortBy]);
 
   // Actions
   const handleMarkLost = async (ticket) => {
@@ -229,7 +292,7 @@ const ActiveTickets = () => {
     try {
       const results = await Promise.allSettled(lostTickets.map((t) => ticketService.delete(t.id)));
       const succeeded = results.filter((r) => r.status === 'fulfilled').length;
-      const failed    = results.length - succeeded;
+      const failed = results.length - succeeded;
       if (succeeded > 0)
         showSuccess(`${succeeded} tiket hilang berhasil dihapus${failed > 0 ? `, ${failed} gagal` : ''}`);
       else showError('Semua penghapusan gagal');
@@ -243,105 +306,152 @@ const ActiveTickets = () => {
     }
   };
 
-  const handlePrintTicket = async (ticket) => {
+  // Download ticket as image (PNG) - using TicketPrint design
+  const handleDownloadTicketImage = async (ticket) => {
     try {
-      setPrinting(true);
+      setDownloadingId(ticket.id);
       const response = await ticketService.print(ticket.id);
       if (response.data.success) {
-        setSelectedTicket(response.data.data);
-        setTimeout(() => printTicket(response.data.data), 100);
-        showSuccess('Tiket siap dicetak');
+        const ticketData = response.data.data;
+        const parkingInfo = { name: ticketData.parkingName || 'ParkHere', address: ticketData.parkingAddress || '' };
+
+        // Dynamically import html2canvas and JsBarcode
+        const html2canvas = (await import('html2canvas')).default;
+
+        // Build ticket HTML matching TicketPrint design
+        const vehicleLabel = {
+          car: 'Mobil',
+          motorcycle: 'Motor',
+        }[ticketData.vehicleType] || ticketData.vehicleType;
+
+        const entryTime = new Date(ticketData.entryTime);
+        const time = entryTime.toLocaleTimeString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+        const date = entryTime.toLocaleDateString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          weekday: 'short',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+
+        const barcodeValue = ticketData.ticketNumber || '';
+
+        // Create container div
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:250px;background:white;padding:15px;';
+        
+        const html = `
+          <div style="font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;width:100%;color:#222;text-align:center;">
+            <div style="font-size:15px;font-weight:800;letter-spacing:0.4px;margin-bottom:5px;color:#111;">${parkingInfo.name}</div>
+            ${parkingInfo.address ? `<div style="font-size:7.5px;color:#666;margin-bottom:10px;">${parkingInfo.address}</div>` : ''}
+            <hr style="border:none;border-top:1.5px solid #222;margin:10px 0;"/>
+            <div style="font-size:9px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#444;margin-bottom:5px;">Tiket Parkir Masuk</div>
+            <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin:5px 0;">${barcodeValue}</div>
+            <hr style="border:none;border-top:1px dashed #aaa;margin:10px 0;"/>
+            <table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:8.5px;">
+              <tr><td style="color:#777;width:35%;padding:6px 0;text-align:left;">Jenis</td><td style="font-weight:600;color:#222;text-align:right;">${vehicleLabel}</td></tr>
+              <tr><td style="color:#777;width:35%;padding:6px 0;text-align:left;">Jam Masuk</td><td style="font-weight:600;color:#222;text-align:right;">${time} WIB</td></tr>
+              <tr><td style="color:#777;width:35%;padding:6px 0;text-align:left;">Tanggal</td><td style="font-weight:600;color:#222;text-align:right;">${date}</td></tr>
+              ${ticketData.plateNumber && ticketData.plateNumber !== 'UNKNOWN' ? `<tr><td style="color:#777;width:35%;padding:6px 0;text-align:left;">Plat</td><td style="font-weight:600;color:#222;text-align:right;">${ticketData.plateNumber}</td></tr>` : ''}
+            </table>
+            <div style="margin-top:15px;padding-top:10px;border-top:1px dashed #aaa;text-align:center;">
+              <svg id="ticket-barcode-svg" style="height:60px;width:100%;margin:0 auto;display:block;"></svg>
+              <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:#333;margin-top:5px;font-family:'Courier New',monospace;">${barcodeValue}</div>
+            </div>
+            <div style="font-size:6.5px;text-align:center;color:#d00;margin-top:15px;padding:10px;border:1px solid #faa;border-radius:2px;background:#fff5f5;font-weight:700;letter-spacing:0.3px;">PERHATIAN: TIKET HILANG DIKENAKAN DENDA</div>
+          </div>
+        `;
+
+        container.innerHTML = html;
+        document.body.appendChild(container);
+
+        // Wait a bit and then render barcode
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Render barcode
+        const barcodeElement = container.querySelector('#ticket-barcode-svg');
+        window.JsBarcode(barcodeElement, barcodeValue, {
+          format: 'CODE128',
+          width: 1.8,
+          height: 60,
+          displayValue: false,
+          margin: 4,
+          background: '#ffffff',
+          lineColor: '#000000'
+        });
+
+        // Wait for barcode to render
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Capture with html2canvas
+        const canvas = await html2canvas(container, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          logging: false,
+          useCORS: true,
+          allowTaint: true,
+          windowHeight: container.scrollHeight
+        });
+
+        // Download
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `ticket-${ticketData.ticketNumber}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        document.body.removeChild(container);
+
+        showSuccess('Tiket berhasil diunduh sebagai gambar');
       }
-    } catch {
-      showError('Gagal mencetak tiket');
+    } catch (error) {
+      console.error('Download error:', error);
+      showError('Gagal mengunduh tiket sebagai gambar');
     } finally {
-      setPrinting(false);
+      setDownloadingId(null);
     }
   };
 
-  const printTicket = (ticketData) => {
-    const vehicleLabel = vehicleTypeMap[ticketData.vehicleType] || ticketData.vehicleType;
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(ticketData.qrCodeData)}`;
-    const entryDate = new Date(ticketData.entryTime);
-    const formattedTime = entryDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-    const formattedDate = entryDate.toLocaleDateString('id-ID', { weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit' });
-    const parkingName    = ticketData.parkingName    || 'Smart Parking';
-    const parkingAddress = ticketData.parkingAddress || '';
+  // Direct to exit with ticket pre-populated
+  const handleDirectToExit = (ticket) => {
+    navigate('/exit', { state: { preselectedTicketNumber: ticket.ticketNumber } });
+  };
 
-    const html = `<!DOCTYPE html>
-<html><head>
-  <meta charset="UTF-8"><title>Tiket Parkir - ${ticketData.ticketNumber}</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}html,body{width:80mm}
-    body{font-family:'Courier New',monospace;background:#f5f5f5}
-    @media print{body{background:white;margin:0}.page{margin:0;box-shadow:none}}
-    .page{width:80mm;padding:5mm;background:white;box-shadow:0 0 10px rgba(0,0,0,.1);margin:0 auto}
-    .header{font-size:13px;font-weight:bold;text-align:center;margin-bottom:0.5mm;color:#1a1a1a}
-    .address{font-size:7.5px;text-align:center;color:#555;margin-bottom:1mm}
-    .title{font-size:10px;text-align:center;font-weight:bold;border-bottom:1.5px solid #000;padding-bottom:1.5mm;margin-bottom:3mm;letter-spacing:1px}
-    .qr-section{display:flex;flex-direction:column;align-items:center;margin-bottom:4mm;background:#fafafa;padding:3mm}
-    .qr-code{width:45mm;height:45mm;border:2px solid #333;display:flex;align-items:center;justify-content:center;background:white;margin-bottom:2mm;padding:1mm}
-    .qr-code img{width:100%;height:100%;display:block}
-    .ticket-no{font-size:14px;font-weight:bold;text-align:center;letter-spacing:2px;margin-bottom:1.5mm}
-    .scan-text{font-size:7.5px;text-align:center;color:#555;font-style:italic}
-    .divider{border-bottom:1px solid #999;margin:2.5mm 0}
-    .divider-dashed{border-bottom:1px dashed #999;margin:2mm 0}
-    .info-section{font-size:8.5px;line-height:1.4;color:#333}
-    .info-row{display:flex;justify-content:space-between;margin:1.5mm 0;padding:.5mm 0;border-bottom:.5px solid #ddd}
-    .label{font-weight:bold;width:40%;color:#444}.value{width:60%;text-align:right;font-weight:500}
-    .note{font-size:7px;text-align:center;color:#e74c3c;margin-top:2mm;font-weight:bold;padding:1mm;background:#ffebeb}
-  </style>
-</head><body><div class="page">
-  <div class="header">${parkingName}</div>
-  ${parkingAddress ? `<div class="address">${parkingAddress}</div>` : ''}
-  <div class="title">TIKET PARKIR</div>
-  <div class="qr-section">
-    <div class="qr-code"><img src="${qrUrl}" alt="QR"/></div>
-    <div class="ticket-no">${ticketData.ticketNumber}</div>
-    <div class="scan-text">Pindai atau tunjukkan saat keluar</div>
-  </div>
-  <div class="divider"></div>
-  <div class="info-section">
-    <div class="info-row"><span class="label">Plat:</span><span class="value">${ticketData.plateNumber}</span></div>
-    <div class="info-row"><span class="label">Jenis:</span><span class="value">${vehicleLabel}</span></div>
-    <div class="info-row"><span class="label">Masuk:</span><span class="value">${formattedTime}</span></div>
-    <div class="info-row"><span class="label">Tgl:</span><span class="value">${formattedDate}</span></div>
-  </div>
-  <div class="divider-dashed"></div>
-  <div class="note">Hilang = Dikenakan Biaya Tambahan</div>
-</div></body></html>`;
-
-    const existing = document.getElementById('print-iframe');
-    if (existing) existing.remove();
-    const iframe = document.createElement('iframe');
-    iframe.id = 'print-iframe';
-    iframe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;border:none;visibility:hidden;';
-    document.body.appendChild(iframe);
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-    iframeDoc.open(); iframeDoc.write(html); iframeDoc.close();
-    const img = iframeDoc.querySelector('img');
-    const triggerPrint = () => { iframe.contentWindow.focus(); iframe.contentWindow.print(); setTimeout(() => iframe.remove(), 1500); };
-    if (img) { img.onload = triggerPrint; img.onerror = triggerPrint; } else setTimeout(triggerPrint, 300);
+  // Copy ticket number to clipboard
+  const handleCopyTicketNumber = (ticketNumber) => {
+    navigator.clipboard.writeText(ticketNumber);
+    setCopiedTicketId(ticketNumber);
+    showSuccess('Nomor tiket tersalin');
+    setTimeout(() => setCopiedTicketId(null), 2000);
   };
 
   // Derived
   const filteredActiveTickets = filterTickets(tickets);
-  const filteredLostTickets   = filterTickets(lostTickets);
-  const displayTickets        = activeTab === 'active' ? filteredActiveTickets : filteredLostTickets;
-  const regulations           = regulationsRef.current;
+  const filteredLostTickets = filterTickets(lostTickets);
+  const displayTickets = activeTab === 'active' ? filteredActiveTickets : filteredLostTickets;
+  const regulations = regulationsRef.current;
+  const openKebabTicket =
+    expandedTicketId != null && activeTab === 'active'
+      ? displayTickets.find((t) => t.id === expandedTicketId)
+      : null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-[#e8eef7] to-slate-100">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="lg:ml-[260px]">
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <header className="bg-white/95 backdrop-blur-sm border-b border-slate-200/80 sticky top-0 z-10 shadow-sm shadow-slate-900/5">
           <div className="flex items-center justify-between px-5 py-3">
             <div className="flex items-center gap-3">
               <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-gray-100">
                 <i className="fas fa-bars text-gray-600"></i>
               </button>
-              <h1 className="text-lg font-bold text-gray-900">
+              <h1 className="text-lg font-bold text-slate-900 font-display tracking-tight">
                 {activeTab === 'active' ? 'Tiket Aktif' : 'Tiket Hilang'}
               </h1>
             </div>
@@ -354,7 +464,7 @@ const ActiveTickets = () => {
             {regulations.autoMarkLost.enabled && (
               <span
                 title={describeAutoMarkRule(regulations)}
-                className="hidden sm:flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100 cursor-default"
+                className="hidden sm:flex items-center gap-1 text-xs text-[#1e3a5f] bg-sky-50 px-2 py-1 rounded-full border border-sky-200/80 cursor-default"
               >
                 <i className="fas fa-shield-alt text-xs"></i>
                 Auto-regulasi aktif
@@ -375,17 +485,15 @@ const ActiveTickets = () => {
             <div className="flex gap-3">
               <button
                 onClick={() => setActiveTab('active')}
-                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'active' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'active' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'
+                  }`}
               >
                 <i className="fas fa-ticket mr-1.5"></i>Aktif ({tickets.length})
               </button>
               <button
                 onClick={() => setActiveTab('lost')}
-                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'lost' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
+                className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'lost' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-600 hover:text-gray-900'
+                  }`}
               >
                 <i className="fas fa-exclamation-circle mr-1.5"></i>
                 Hilang ({lostTickets.length})
@@ -442,16 +550,91 @@ const ActiveTickets = () => {
                 <option value="duration">Durasi Terlama</option>
               </select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
+              <button
+                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                className="flex-1 px-3 py-1.5 text-sm bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <i className={`fas fa-sliders-h text-xs`}></i>Lanjut
+              </button>
               <button
                 onClick={() => { invalidateActiveTicketsCache(); fetchTickets(false, true); }}
                 disabled={loading}
-                className="w-full px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-1.5"
+                className="flex-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-1.5"
               >
                 <i className={`fas fa-sync-alt ${loading ? 'fa-spin' : ''}`}></i>Refresh
               </button>
             </div>
           </div>
+
+          {/* Advanced Filters Section */}
+          {showAdvancedFilters && (
+            <div className="bg-slate-50 rounded-xl p-5 shadow-sm mb-5 border border-slate-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <i className="fas fa-filter text-blue-500"></i> Filter Lanjutan
+                </h3>
+                <button
+                  onClick={() => {
+                    setDurationRanges([]);
+                    setEntryDateFrom(null);
+                    setEntryDateTo(null);
+                  }}
+                  className="text-xs text-red-600 hover:text-red-700 font-medium"
+                >
+                  Hapus Filter
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Duration Range Filter */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Rentang Durasi</label>
+                  <div className="space-y-2">
+                    {['0-1h', '1-3h', '3-8h', '8h+'].map((range) => (
+                      <label key={range} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={durationRanges.includes(range)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setDurationRanges([...durationRanges, range]);
+                            } else {
+                              setDurationRanges(durationRanges.filter((r) => r !== range));
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <span>{range}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Entry Date From */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Dari Tanggal Masuk</label>
+                  <input
+                    type="date"
+                    value={entryDateFrom ? entryDateFrom.split('T')[0] : ''}
+                    onChange={(e) => setEntryDateFrom(e.target.value ? new Date(e.target.value).toISOString() : null)}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Entry Date To */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Hingga Tanggal Masuk</label>
+                  <input
+                    type="date"
+                    value={entryDateTo ? entryDateTo.split('T')[0] : ''}
+                    onChange={(e) => setEntryDateTo(e.target.value ? new Date(e.target.value).toISOString() : null)}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Results info */}
           <div className="mb-4 flex items-center justify-between">
@@ -465,8 +648,8 @@ const ActiveTickets = () => {
                 {regulations.autoMarkLost.mode === 'daily'
                   ? `Batas harian: pukul ${regulations.autoMarkLost.cutoffTime}`
                   : regulations.autoMarkLost.scheduledDate
-                  ? `Terjadwal: ${regulations.autoMarkLost.scheduledDate} ${regulations.autoMarkLost.scheduledTime}`
-                  : 'Jadwal belum diset'}
+                    ? `Terjadwal: ${regulations.autoMarkLost.scheduledDate} ${regulations.autoMarkLost.scheduledTime}`
+                    : 'Jadwal belum diset'}
               </span>
             )}
           </div>
@@ -497,7 +680,23 @@ const ActiveTickets = () => {
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <span className="font-mono font-semibold text-blue-600 text-xs">{ticket.ticketNumber}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-semibold text-blue-600 text-xs">
+                                {ticket.ticketNumber}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyTicketNumber(ticket.ticketNumber)}
+                                title="Salin nomor tiket"
+                                aria-label="Salin nomor tiket"
+                                className="shrink-0 p-1 rounded text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                              >
+                                <i
+                                  className={`fas text-xs ${copiedTicketId === ticket.ticketNumber ? 'fa-check text-emerald-600' : 'fa-copy'
+                                    }`}
+                                />
+                              </button>
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <span className="font-bold text-gray-900">{ticket.plateNumber}</span>
@@ -513,29 +712,59 @@ const ActiveTickets = () => {
                             </span>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex gap-1.5 flex-wrap">
-                              <button onClick={() => { setSelectedTicket(ticket); setShowModal(true); }}
-                                className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium hover:bg-blue-200 transition-colors">
-                                <i className="fas fa-eye mr-0.5"></i>Lihat
-                              </button>
-                              {activeTab === 'active' && (
-                                <>
-                                  <button onClick={() => handlePrintTicket(ticket)} disabled={printing}
-                                    className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium hover:bg-green-200 disabled:bg-gray-200 transition-colors">
-                                    <i className={`fas fa-print mr-0.5 ${printing ? 'fa-spin' : ''}`}></i>Cetak
-                                  </button>
-                                  <button onClick={() => handleMarkLost(ticket)}
-                                    className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium hover:bg-amber-200 transition-colors">
-                                    <i className="fas fa-exclamation-triangle mr-0.5"></i>Hilang
-                                  </button>
-                                </>
-                              )}
-                              {activeTab === 'lost' && (
-                                <button onClick={() => handleDeleteLostTicket(ticket)} disabled={deletingId === ticket.id}
-                                  className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium hover:bg-red-200 disabled:bg-gray-200 transition-colors">
-                                  {deletingId === ticket.id ? <i className="fas fa-spinner fa-spin mr-0.5"></i> : <i className="fas fa-trash-alt mr-0.5"></i>}Hapus
+                            <div className="space-y-2">
+                              {/* Primary Actions */}
+                              <div className="flex gap-1.5 flex-wrap items-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedTicket(ticket);
+                                    setShowModal(true);
+                                  }}
+                                  className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium hover:bg-blue-200 transition-colors"
+                                >
+                                  <i className="fas fa-eye mr-0.5"></i>Lihat
                                 </button>
-                              )}
+                                {activeTab === 'active' && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMarkLost(ticket)}
+                                      className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium hover:bg-amber-200 transition-colors"
+                                    >
+                                      <i className="fas fa-exclamation-triangle mr-0.5"></i>Hilang
+                                    </button>
+                                    <button
+                                      type="button"
+                                      ref={expandedTicketId === ticket.id ? kebabButtonRef : undefined}
+                                      onClick={() =>
+                                        setExpandedTicketId(expandedTicketId === ticket.id ? null : ticket.id)
+                                      }
+                                      className="p-1.5 rounded text-slate-600 hover:bg-slate-200 transition-colors"
+                                      aria-expanded={expandedTicketId === ticket.id}
+                                      aria-haspopup="menu"
+                                      aria-label="Menu aksi lainnya"
+                                    >
+                                      <i className="fas fa-ellipsis-v text-sm"></i>
+                                    </button>
+                                  </>
+                                )}
+                                {activeTab === 'lost' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteLostTicket(ticket)}
+                                    disabled={deletingId === ticket.id}
+                                    className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium hover:bg-red-200 disabled:bg-gray-200 transition-colors"
+                                  >
+                                    {deletingId === ticket.id ? (
+                                      <i className="fas fa-spinner fa-spin mr-0.5"></i>
+                                    ) : (
+                                      <i className="fas fa-trash-alt mr-0.5"></i>
+                                    )}
+                                    Hapus
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -562,11 +791,11 @@ const ActiveTickets = () => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
           onClick={(e) => e.target === e.currentTarget && setShowModal(false)}>
           <div className="bg-white rounded-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-5 text-white rounded-t-2xl">
+            <div className="bg-gradient-to-r from-slate-900 via-[#1e3a5f] to-slate-800 p-5 text-white rounded-t-2xl border-b border-white/10">
               <div className="flex justify-between items-center">
                 <div>
-                  <h3 className="text-lg font-bold">{selectedTicket.ticketNumber}</h3>
-                  <p className="text-blue-100 text-xs mt-0.5">{selectedTicket.plateNumber}</p>
+                  <h3 className="text-lg font-bold font-display">{selectedTicket.ticketNumber}</h3>
+                  <p className="text-sky-200/90 text-xs mt-0.5">{selectedTicket.plateNumber}</p>
                 </div>
                 <button onClick={() => setShowModal(false)} className="text-white/80 hover:text-white text-xl leading-none">
                   <i className="fas fa-times"></i>
@@ -574,11 +803,45 @@ const ActiveTickets = () => {
               </div>
             </div>
             <div className="p-5">
+              {/* Entry Image Display */}
+              <div className="mb-5 p-3 bg-gray-50 border-2 border-gray-200 rounded-xl">
+                {entryImageUrl ? (
+                  <img src={entryImageUrl} alt="Entry" className="w-full max-h-64 object-cover rounded" />
+                ) : (
+                  <div className="w-full h-40 flex items-center justify-center text-gray-400 text-sm">
+                    <div className="text-center">
+                      <i className="fas fa-image text-2xl mb-2 block"></i>
+                      <p>No entry image available</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-center mb-5">
                 <div className="p-3 bg-white border-2 border-gray-200 rounded-xl">
-                  {selectedTicket.qrCodeData
-                    ? <QRCode value={selectedTicket.qrCodeData} size={140} level="M" />
-                    : <div className="w-36 h-36 flex items-center justify-center text-gray-400 text-xs text-center">QR tidak tersedia</div>}
+                  {selectedTicket.barcodeData || selectedTicket.ticketNumber ? (
+                    <svg
+                      id={`barcode-active-${selectedTicket.id}`}
+                      ref={(el) => {
+                        if (el) {
+                          try {
+                            JsBarcode(el, selectedTicket.ticketNumber || selectedTicket.barcodeData, {
+                              format: 'CODE128',
+                              width: 1.5,
+                              height: 60,
+                              displayValue: false,
+                              margin: 4,
+                            });
+                          } catch (e) { console.error('Barcode render error', e); }
+                        }
+                      }}
+                    ></svg>
+                  ) : (
+                    <div className="w-36 h-36 flex items-center justify-center text-gray-400 text-xs text-center">Barcode tidak tersedia</div>
+                  )}
+                  {selectedTicket.ticketNumber && (
+                    <p className="text-xs font-mono font-bold text-gray-700 mt-1 tracking-wider">{selectedTicket.ticketNumber}</p>
+                  )}
                 </div>
               </div>
               <div className="space-y-1 mb-5 text-sm">
@@ -594,13 +857,7 @@ const ActiveTickets = () => {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {activeTab === 'active' && (
-                  <button onClick={() => { handlePrintTicket(selectedTicket); setShowModal(false); }} disabled={printing}
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors">
-                    <i className={`fas fa-print ${printing ? 'fa-spin' : ''}`}></i>{printing ? 'Cetak...' : 'Cetak'}
-                  </button>
-                )}
+              <div className="flex gap-2 justify-center">
                 {activeTab === 'lost' && (
                   <button onClick={() => { setShowModal(false); handleDeleteLostTicket(selectedTicket); }}
                     className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
@@ -608,7 +865,7 @@ const ActiveTickets = () => {
                   </button>
                 )}
                 <button onClick={() => setShowModal(false)}
-                  className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+                  className="flex items-center justify-center gap-1.5 px-32 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
                   <i className="fas fa-times"></i>Tutup
                 </button>
               </div>
@@ -657,6 +914,52 @@ const ActiveTickets = () => {
           </div>
         </div>
       )}
+
+      {openKebabTicket &&
+        kebabMenuPosition &&
+        createPortal(
+          <div
+            ref={kebabMenuPanelRef}
+            className="fixed z-[100] min-w-[11rem] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+            style={{
+              top: kebabMenuPosition.top,
+              left: kebabMenuPosition.left,
+              width: KEBAB_MENU_WIDTH_PX,
+            }}
+            role="menu"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                handleDownloadTicketImage(openKebabTicket);
+                setExpandedTicketId(null);
+              }}
+              disabled={downloadingId === openKebabTicket.id}
+              className="w-full px-3 py-2 text-left text-xs font-medium text-purple-700 hover:bg-purple-50 disabled:text-gray-400 disabled:hover:bg-transparent flex items-center gap-2"
+            >
+              {downloadingId === openKebabTicket.id ? (
+                <i className="fas fa-spinner fa-spin w-4 text-center"></i>
+              ) : (
+                <i className="fas fa-download w-4 text-center"></i>
+              )}
+              Download Tiket
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                handleDirectToExit(openKebabTicket);
+                setExpandedTicketId(null);
+              }}
+              className="w-full px-3 py-2 text-left text-xs font-medium text-teal-700 hover:bg-teal-50 flex items-center gap-2"
+            >
+              <i className="fas fa-arrow-right w-4 text-center"></i>
+              Arahkan ke Exit
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };

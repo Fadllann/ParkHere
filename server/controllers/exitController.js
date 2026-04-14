@@ -1,35 +1,30 @@
 const { Ticket, Payment, Rate, ActivityLog } = require('../models');
-const qrService = require('../services/qrService');
+const barcodeService = require('../services/barcodeService');
 
 function calculateParking(durationMinutes, rate) {
-    const gracePeriod = rate.gracePeriodMinutes || 0;
-    
-    if (durationMinutes <= gracePeriod) {
-        return 0;
-    }
-
-    const chargeableMinutes = durationMinutes - gracePeriod;
-    const hours = Math.ceil(chargeableMinutes / 60);
-    
-    if (hours === 0) return rate.firstHourRate || rate.ratePerHour;
+    let hours = Math.ceil(durationMinutes / 60);
+    if (hours === 0) hours = 1;
     
     const cost = hours * rate.ratePerHour;
-    return Math.min(cost, rate.dailyMax);
+    if (rate.dailyMax && cost > rate.dailyMax) {
+        return rate.dailyMax;
+    }
+    return cost;
 }
 
 const exitTicket = async (req, res, next) => {
     try {
-        const { ticketNumber, plateNumber, qrCodeData } = req.body;
+        const { ticketNumber, plateNumber, barcodeData } = req.body;
         
         let ticket;
-
-        // Find ticket by ticket number, plate number, or QR code
-        if (qrCodeData) {
-            const verified = qrService.verifyTicketQR(qrCodeData);
+        
+        // Find ticket by ticket number, plate number, or barcode
+        if (barcodeData) {
+            const verified = barcodeService.verifyTicketBarcode(barcodeData);
             if (!verified) {
                 return res.status(403).json({
                     success: false,
-                    message: 'Invalid or tampered QR code'
+                    message: 'Invalid or tampered barcode'
                 });
             }
             ticket = await Ticket.findOne({

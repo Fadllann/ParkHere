@@ -1,3 +1,4 @@
+const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
 // Import all models
@@ -6,10 +7,10 @@ const Ticket = require('./Ticket');
 const Payment = require('./Payment');
 const Rate = require('./Rate');
 const PlateCapture = require('./PlateCapture');
-const Blacklist = require('./Blacklist');
-const MonthlyPass = require('./MonthlyPass');
 const ActivityLog = require('./ActivityLog');
 const Setting = require('./Setting');
+const BackupSettings = require('./BackupSettings');
+const CashierLog = require('./CashierLog');
 
 // Define Relationships
 
@@ -21,9 +22,7 @@ Payment.belongsTo(User, { foreignKey: 'operatorId', as: 'operator' });
 User.hasMany(ActivityLog, { foreignKey: 'userId', as: 'activities' });
 ActivityLog.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
-// User -> Blacklist (who added blacklist entry)
-User.hasMany(Blacklist, { foreignKey: 'addedBy', as: 'blacklistEntries' });
-Blacklist.belongsTo(User, { foreignKey: 'addedBy', as: 'addedByUser' });
+
 
 // Ticket -> Payment
 Ticket.hasOne(Payment, { foreignKey: 'ticketId', as: 'payment' });
@@ -33,10 +32,30 @@ Payment.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' });
 Ticket.hasMany(PlateCapture, { foreignKey: 'ticketId', as: 'plateCaptures' });
 PlateCapture.belongsTo(Ticket, { foreignKey: 'ticketId', as: 'ticket' });
 
-// Sync all models
+// User -> CashierLog (creator)
+User.hasMany(CashierLog, { foreignKey: 'createdBy', as: 'cashierLogs' });
+CashierLog.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+
+// Payment -> CashierLog (one ledger row per payment income)
+Payment.hasOne(CashierLog, { foreignKey: 'paymentId', as: 'cashierLog' });
+CashierLog.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+
+async function ensureBarcodeColumns() {
+    const qi = sequelize.getQueryInterface();
+    const ticketsDesc = await qi.describeTable('tickets');
+    if (!ticketsDesc.barcode_data) {
+        await qi.addColumn('tickets', 'barcode_data', {
+            type: DataTypes.TEXT,
+            allowNull: true
+        });
+        console.log('Added missing column tickets.barcode_data');
+    }
+}
+// Sync all models and ensure barcode columns exist
 const syncDatabase = async () => {
     try {
         await sequelize.sync();
+        await ensureBarcodeColumns();
         console.log('All models synchronized successfully.');
     } catch (error) {
         console.error('Error synchronizing models:', error.message);
@@ -52,9 +71,9 @@ module.exports = {
     Payment,
     Rate,
     PlateCapture,
-    Blacklist,
-    MonthlyPass,
     ActivityLog,
     Setting,
+    BackupSettings,
+    CashierLog,
     syncDatabase
 };

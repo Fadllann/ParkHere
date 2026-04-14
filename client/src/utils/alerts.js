@@ -26,7 +26,7 @@ export const showError = (message, title = 'Error!') => {
         icon: 'error',
         title: title,
         text: message,
-        confirmButtonColor: '#3b82f6'
+        confirmButtonColor: '#1e3a5f'
     });
 };
 
@@ -35,7 +35,7 @@ export const showWarning = (message, title = 'Peringatan!') => {
         icon: 'warning',
         title: title,
         text: message,
-        confirmButtonColor: '#3b82f6'
+        confirmButtonColor: '#1e3a5f'
     });
 };
 
@@ -53,7 +53,7 @@ export const showConfirm = (message, title = 'Konfirmasi', confirmText = 'Ya', c
         title: title,
         text: message,
         showCancelButton: true,
-        confirmButtonColor: '#3b82f6',
+        confirmButtonColor: '#1e3a5f',
         cancelButtonColor: '#6b7280',
         confirmButtonText: confirmText,
         cancelButtonText: cancelText
@@ -87,7 +87,7 @@ export const showTicketSuccess = (ticketData) => {
         <p><strong>Waktu Masuk:</strong> ${new Date(ticketData.entryTime).toLocaleString('id-ID')}</p>
       </div>
     `,
-        confirmButtonColor: '#3b82f6',
+        confirmButtonColor: '#1e3a5f',
         confirmButtonText: 'OK'
     });
 };
@@ -98,14 +98,13 @@ export const showPaymentSuccess = (paymentData) => {
         title: 'Pembayaran Berhasil!',
         html: `
       <div class="text-left">
-        <p class="mb-2"><strong>No. Receipt:</strong> ${paymentData.receiptNumber}</p>
         <p class="mb-2"><strong>Total:</strong> ${paymentData.formattedAmount}</p>
         <p class="mb-2"><strong>Durasi:</strong> ${paymentData.formattedDuration}</p>
         <p><strong>Metode:</strong> ${paymentData.paymentMethod}</p>
       </div>
     `,
         confirmButtonColor: '#10b981',
-        confirmButtonText: 'Cetak Receipt'
+        confirmButtonText: 'OK'
     });
 };
 

@@ -21,7 +21,7 @@ const User = sequelize.define('User', {
         allowNull: false
     },
     role: {
-        type: DataTypes.ENUM('admin', 'operator', 'security'),
+        type: DataTypes.ENUM('admin', 'operator'),
         allowNull: false,
         defaultValue: 'operator'
     },
@@ -29,7 +29,11 @@ const User = sequelize.define('User', {
         type: DataTypes.STRING(100),
         allowNull: true,
         validate: {
-            isEmail: true
+            isEmail: function(val) {
+                if (val && !val.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+                    throw new Error('Must be a valid email address');
+                }
+            }
         }
     },
     fullName: {

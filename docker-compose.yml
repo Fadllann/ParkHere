@@ -8,16 +8,15 @@ services:
       MYSQL_USER: parking_app
       MYSQL_PASSWORD: parking_app321
     volumes:
-      - ./mysql-data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
+    cpus: 0.5
+    mem_limit: 2g
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pGparkingApp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   db_phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -30,15 +29,34 @@ services:
       PMA_HOST: db
       PMA_USER: parking_app
       PMA_PASSWORD: parking_app321
+    cpus: 0.5
+    mem_limit: 512m
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
+
+  plate_service:
+    build: ./plate_service
+    container_name: parking_plate_service
+    ports:
+      - "5001:5001"
+    restart: unless-stopped
+    environment:
+      - PORT=5001
+      - HF_HOME=/root/.cache
+      - EASYOCR_HOME=/root/.cache/easyocr
+    volumes:
+      - ./plate_service:/app
+      - yolo_cache:/root/.cache
+      - plate_models:/root/.cache/easyocr
+      - ./debug_frames:/tmp/debug
+      - ./server/uploads:/app/uploads
+    cpus: 2.0
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
   server:
     build:
@@ -46,7 +64,8 @@ services:
       dockerfile: Dockerfile
     container_name: parking_server
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DB_HOST: db
       DB_PORT: 3306
@@ -54,20 +73,16 @@ services:
       DB_PASSWORD: parking_app321
       DB_NAME: parking_db
       JWT_SECRET: parking_v2DZ9at7Wg
+      PLATE_SERVICE_URL: http://plate_service:5001
     ports:
       - "5000:5000"
     restart: unless-stopped
     volumes:
       - ./server:/app
-    command: sh -c "npm run db:seed && npm start"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
+      - server-node-modules:/app/node_modules
+      - ./server/uploads:/app/uploads
+    cpus: 0.5
+    mem_limit: 1g
 
   client:
     build:
@@ -83,13 +98,13 @@ services:
     restart: unless-stopped
     volumes:
       - ./client:/app
-      - /app/node_modules
-    command: npm run dev
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 256M
+      - client-node-modules:/app/node_modules
+    cpus: 0.5
+    mem_limit: 1g
+
+volumes:
+  mysql-data:
+  yolo_cache:
+  plate_models:
+  server-node-modules:
+  client-node-modules:

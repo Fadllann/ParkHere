@@ -1,6 +1,6 @@
 require('dotenv').config();
-const { sequelize } = require('../config/database');
-const { User, Rate, Setting, syncDatabase } = require('../models');
+const { User, Rate, Setting, BackupSettings, Payment, Ticket, CashierLog, syncDatabase } = require('../models');
+const cashierService = require('../services/cashierService');
 
 const seedData = async () => {
     try {
@@ -8,13 +8,13 @@ const seedData = async () => {
         await syncDatabase();
 
         // Create default admin user
-        const [, adminCreated] = await User.findOrCreate({
+        const [adminUser] = await User.findOrCreate({
             where: { username: 'admin' },
             defaults: {
                 username: 'admin',
                 password: 'admin123',
                 role: 'admin',
-                email: 'admin@smartparking.com',
+                email: 'admin@parkhere.com',
                 fullName: 'System Administrator'
             }
         });
@@ -25,16 +25,14 @@ const seedData = async () => {
                 username: 'operator',
                 password: 'operator123',
                 role: 'operator',
-                email: 'operator@smartparking.com',
+                email: 'operator@parkhere.com',
                 fullName: 'Default Operator'
             }
         });
         // Create default rates (in IDR)
         const defaultRates = [
-            { vehicleType: 'motorcycle', ratePerHour: 2000,  dailyMax: 15000, gracePeriodMinutes: 15, lostTicketFee: 50000,  firstHourRate: 2000 },
-            { vehicleType: 'car',        ratePerHour: 5000,  dailyMax: 40000, gracePeriodMinutes: 15, lostTicketFee: 100000, firstHourRate: 5000 },
-            { vehicleType: 'suv',        ratePerHour: 7000,  dailyMax: 50000, gracePeriodMinutes: 15, lostTicketFee: 125000, firstHourRate: 7000 },
-            { vehicleType: 'truck',      ratePerHour: 10000, dailyMax: 75000, gracePeriodMinutes: 15, lostTicketFee: 150000, firstHourRate: 10000 }
+            { vehicleType: 'motorcycle', ratePerHour: 2000,  dailyMax: 16000, gracePeriodMinutes: 15, lostTicketFee: 50000},
+            { vehicleType: 'car',        ratePerHour: 5000,  dailyMax: 40000, gracePeriodMinutes: 15, lostTicketFee: 100000 }
         ];
 
         for (const rateData of defaultRates) {
@@ -48,10 +46,10 @@ const seedData = async () => {
         // General settings
         const defaultSettings = [
             { key: 'max_capacity',      value: 100,                              description: 'Maximum parking capacity',          category: 'general' },
-            { key: 'parking_name',      value: 'Smart Parking',                  description: 'Parking facility name',             category: 'general' },
-            { key: 'parking_address',   value: 'Address',    description: 'Parking address',                   category: 'general' },
+            { key: 'parking_name',      value: 'ParkHere',                  description: 'Parking facility name',             category: 'general' },
+            { key: 'parking_address',   value: 'Alamat',    description: 'Parking address',                   category: 'general' },
             { key: 'enable_lpr',        value: true,                             description: 'Enable license plate recognition',  category: 'general' },
-            { key: 'enable_monthly_pass', value: true,                           description: 'Enable monthly pass system',        category: 'general' },
+            { key: 'globalLostTicketFee', value: 200000,                          description: 'Global default lost ticket fee (IDR)', category: 'pricing' },
 
             // Regulation settings stored as JSON objects in setting_value
             {
@@ -80,12 +78,54 @@ const seedData = async () => {
         for (const setting of defaultSettings) {
             await Setting.set(setting.key, setting.value, setting.description);
         }
+
+        // Create default BackupSettings
+        const defaultBackupSettings = await BackupSettings.findOne();
+        if (!defaultBackupSettings) {
+            await BackupSettings.create({
+                isEnabled: false,
+                interval: null,
+                lastBackupAt: null,
+                lastBackupStatus: null,
+                lastBackupFile: null
+            });
+        }
+
+        // Backfill ledger from existing payments (idempotent via paymentId)
+        const payments = await Payment.findAll({
+            order: [['paidAt', 'ASC'], ['id', 'ASC']],
+            include: [{ model: Ticket, as: 'ticket', attributes: ['ticketNumber'], required: false }]
+        });
+        for (const p of payments) {
+            const ref = p.ticket?.ticketNumber || String(p.id);
+            const desc =
+                p.ticket?.ticketNumber
+                    ? `Payment — ${p.ticket.ticketNumber}`
+                    : p.isLostTicket
+                      ? `Lost ticket — ${p.vehicleType || 'unknown'}`
+                      : `Payment #${p.id}`;
+            await cashierService.recordIncomeFromPayment({
+                payment: p,
+                createdBy: p.operatorId || adminUser.id,
+                description: desc,
+                referenceId: ref
+            });
+        }
+
+        // Recompute ledger balances to ensure consistency
+        // (in case payments were added/modified before seeding)
+        await cashierService.recomputeAllBalances();
+
         process.exit(0);
     } catch (error) {
-        console.error('Seeding failed:', error.message);
-        console.error(error.stack);
+        console.error('Seed failed:', error);
         process.exit(1);
     }
 };
 
-seedData();
+module.exports = { seedData };
+
+// Only auto-run if this file is executed directly
+if (require.main === module) {
+    seedData();
+}

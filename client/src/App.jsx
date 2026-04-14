@@ -5,9 +5,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Entry from './pages/Entry';
 import AutoEntry from './pages/AutoEntry';
-import CustomerTickets from './pages/CustomerTickets';
 import Exit from './pages/Exit';
 import AdminDashboard from './pages/AdminDashboard';
+import Statistics from './pages/Statistics';
 import ActiveTickets from './pages/ActiveTickets';
 import PaymentHistory from './pages/PaymentHistory';
 import Settings from './pages/Settings';
@@ -65,17 +65,10 @@ function App() {
                             </PublicRoute>
                         }
                     />
-
-                    {/* Auto Entry Route */}
                     <Route
                         path="/auto-entry"
-                        element={
-                            <PublicRoute>
-                                <AutoEntry />
-                            </PublicRoute>
-                        }
+                        element={<AutoEntry />}
                     />
-                    {/* Protected Customer Routes */}
                     <Route
                         path="/entry"
                         element={
@@ -89,14 +82,6 @@ function App() {
                         element={
                             <ProtectedRoute>
                                 <Exit />
-                            </ProtectedRoute>
-                        }
-                    />
-                    <Route
-                        path="/my-tickets"
-                        element={
-                            <ProtectedRoute>
-                                <CustomerTickets />
                             </ProtectedRoute>
                         }
                     />
@@ -115,6 +100,14 @@ function App() {
                         element={
                             <ProtectedRoute allowedRoles={['admin', 'operator']}>
                                 <AdminDashboard />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/admin/statistics"
+                        element={
+                            <ProtectedRoute allowedRoles={['admin', 'operator']}>
+                                <Statistics />
                             </ProtectedRoute>
                         }
                     />
@@ -159,7 +152,6 @@ function App() {
                         }
                     />
 
-                    {/* 404 - Must be last */}
                     <Route path="*" element={<NotFound />} />
                 </Routes>
             </BrowserRouter>

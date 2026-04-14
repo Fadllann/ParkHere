@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import Sidebar from '../components/common/Sidebar';
 import Loading from '../components/common/Loading';
-import { adminService, ticketService } from '../services/api';
+import ActivityLogsModal from '../components/admin/ActivityLogsModal';
+import { adminService, ticketService, backupService } from '../services/api';
 import { showError, showSuccess, showConfirm } from '../utils/alerts';
 import {
   fetchRegulations,
@@ -18,39 +19,32 @@ import {
   invalidateSettingsCache,
   invalidateDashboardCache,
 } from '../utils/dashboardCache';
+import { getCacheData, invalidateCache } from '../utils/apiCache';
 
 const vehicleTypeMap = {
   car: 'Mobil',
   motorcycle: 'Sepeda Motor',
-  truck: 'Truk',
-  suv: 'SUV',
 };
 
 const roleMap = {
   admin: 'Admin',
   operator: 'Operator',
-  user: 'Pengguna',
 };
 
 const getTodayStr = () => new Date().toISOString().split('T')[0];
-
-// Stable fetchers (defined outside the component so they're stable refs)
-// getCachedSettings / getCachedDashboard use these as the actual API callers,
-// but only invoke them when the cache entry has expired.
 
 async function fetchSettingsData() {
   const res = await adminService.getSettings();
   return res.data.data.settings;
 }
 
-// Compatible with getCachedDashboard returns { stats, lostTickets }
 async function fetchDashboardData() {
   const [dashRes, lostRes] = await Promise.all([
     adminService.getDashboard(),
     ticketService.search({ status: 'lost', limit: 100 }),
   ]);
   return {
-    stats:       dashRes.data.success ? dashRes.data.data            : null,
+    stats: dashRes.data.success ? dashRes.data.data : null,
     lostTickets: lostRes.data.success ? lostRes.data.data.tickets || [] : [],
   };
 }
@@ -67,14 +61,12 @@ const ToggleSwitch = ({ checked, onChange, disabled = false, label, description 
       aria-checked={checked}
       onClick={() => !disabled && onChange(!checked)}
       disabled={disabled}
-      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
-        checked ? 'bg-blue-600' : 'bg-gray-200'
-      } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${checked ? 'bg-blue-600' : 'bg-gray-200'
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
     >
       <span
-        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-          checked ? 'translate-x-5' : 'translate-x-0'
-        }`}
+        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${checked ? 'translate-x-5' : 'translate-x-0'
+          }`}
       />
     </button>
   </div>
@@ -95,10 +87,23 @@ const Settings = () => {
   const [savingGeneral, setSavingGeneral] = useState(false);
   const [activeCount, setActiveCount] = useState(null);
 
-  // Rates / Users / Blacklist
+  // Rates / Users
   const [rates, setRates] = useState([]);
   const [users, setUsers] = useState([]);
-  const [blacklist, setBlacklist] = useState([]);
+  const [globalLostFee, setGlobalLostFee] = useState(50000);
+  const [savingGlobalFee, setSavingGlobalFee] = useState(false);
+  const [rateToggles, setRateToggles] = useState({});
+  const [savingRate, setSavingRate] = useState({});
+  // Both rate cards expand/collapse in sync via a single boolean
+  const [rateCardsExpanded, setRateCardsExpanded] = useState(false);
+  const [rateCardDirty, setRateCardDirty] = useState({});
+  const [rateCardOriginalValues, setRateCardOriginalValues] = useState({});
+  const [rateEditValues, setRateEditValues] = useState({});
+  const [showActivityLogs, setShowActivityLogs] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'general') setShowActivityLogs(false);
+  }, [activeTab]);
 
   // Regulations
   const [regulations, setRegulations] = useState(DEFAULT_REGULATIONS);
@@ -106,7 +111,13 @@ const Settings = () => {
   const [savingRegulations, setSavingRegulations] = useState(false);
   const [regulationsLoading, setRegulationsLoading] = useState(false);
 
-  // Load data per active tab
+  // Database
+  const [backupStatus, setBackupStatus] = useState(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [autoBackupConfig, setAutoBackupConfig] = useState({ isEnabled: false, interval: 'daily' });
+  const [savingAutoBackup, setSavingAutoBackup] = useState(false);
+  const [importFile, setImportFile] = useState(null);
 
   const loadGeneral = useCallback(async () => {
     setLoading(true);
@@ -116,9 +127,9 @@ const Settings = () => {
         getCachedDashboard(fetchDashboardData),
       ]);
       setGeneralSettings({
-        parking_name:    settings.parking_name    || '',
+        parking_name: settings.parking_name || '',
         parking_address: settings.parking_address || '',
-        max_capacity:    settings.max_capacity    ?? 100,
+        max_capacity: settings.max_capacity ?? 100,
       });
       setActiveCount(stats?.activeTickets ?? null);
     } catch {
@@ -134,7 +145,6 @@ const Settings = () => {
     if (tab === 'regulations') {
       setRegulationsLoading(true);
       try {
-        // getCachedRegulations serves from cache for up to 5 minutes
         const { regs } = await getCachedRegulations(fetchRegulations);
         setRegulations(regs);
         setRegulationDirty(false);
@@ -146,17 +156,65 @@ const Settings = () => {
       return;
     }
 
+    if (tab === 'database') {
+      setLoading(true);
+      try {
+        const { data } = await getCacheData('backupStatus', async () => {
+          const res = await backupService.getBackupStatus();
+          return res.data.data.status;
+        });
+        setBackupStatus(data);
+      } catch {
+        showError('Gagal memuat status database');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     try {
       if (tab === 'rates') {
-        const res = await adminService.getRates();
-        setRates(res.data.data.rates || []);
+        const { data: ratesData } = await getCacheData('rates', async () => {
+          const res = await adminService.getRates();
+          return res.data.data.rates || [];
+        });
+
+        const toggles = {};
+        const originalValues = {};
+        const editValues = {};
+        (ratesData || []).forEach(rate => {
+          toggles[rate.vehicleType] = {
+            lostTicketFeeEnabled: rate.lostTicketFee > 0,
+            dailyMaxEnabled: rate.dailyMax > 0
+          };
+          originalValues[rate.vehicleType] = {
+            ratePerHour: rate.ratePerHour,
+            dailyMax: rate.dailyMax,
+            gracePeriodMinutes: rate.gracePeriodMinutes,
+            lostTicketFee: rate.lostTicketFee,
+            lostTicketFeeEnabled: rate.lostTicketFee > 0,
+            dailyMaxEnabled: rate.dailyMax > 0
+          };
+          editValues[rate.vehicleType] = {
+            ratePerHour: rate.ratePerHour,
+            dailyMax: rate.dailyMax,
+            gracePeriodMinutes: rate.gracePeriodMinutes,
+            lostTicketFee: rate.lostTicketFee
+          };
+        });
+        setRateToggles(toggles);
+        setRateCardOriginalValues(originalValues);
+        setRateEditValues(editValues);
+        setRateCardDirty({});
+        setRateCardsExpanded(false);
+        setRates(ratesData || []);
       } else if (tab === 'users') {
-        const res = await adminService.getUsers();
-        setUsers(res.data.data.users || []);
-      } else if (tab === 'blacklist') {
-        const res = await adminService.getBlacklist();
-        setBlacklist(res.data.data.blacklist || []);
+        const { data: usersData } = await getCacheData('users', async () => {
+          const res = await adminService.getUsers();
+          return res.data.data.users || [];
+        });
+        setUsers(usersData || []);
       }
     } catch {
       showError('Gagal memuat data');
@@ -169,8 +227,6 @@ const Settings = () => {
     loadTabData(activeTab);
   }, [activeTab, loadTabData]);
 
-  // General settings handlers
-
   const updateGeneral = (key, value) => {
     setGeneralSettings((prev) => ({ ...prev, [key]: value }));
     setGeneralDirty(true);
@@ -180,12 +236,12 @@ const Settings = () => {
     setSavingGeneral(true);
     try {
       await adminService.updateSettings({
-        parking_name:    generalSettings.parking_name,
+        parking_name: generalSettings.parking_name,
         parking_address: generalSettings.parking_address,
-        max_capacity:    parseInt(generalSettings.max_capacity) || 100,
+        max_capacity: parseInt(generalSettings.max_capacity) || 100,
       });
-      // Bust the settings cache so the next read reflects the saved values
       invalidateSettingsCache();
+      invalidateCache('settings');
       showSuccess('Pengaturan umum berhasil disimpan');
       setGeneralDirty(false);
     } catch {
@@ -194,8 +250,6 @@ const Settings = () => {
       setSavingGeneral(false);
     }
   };
-
-  // Regulation handlers
 
   const updateRegulation = (section, key, value) => {
     setRegulations((prev) => ({
@@ -210,9 +264,6 @@ const Settings = () => {
     try {
       const ok = await saveRegulations(regulations);
       if (ok) {
-        // Bust the regulations cache so the next getCachedRegulations() call
-        // re-fetches — ActiveTickets and AdminDashboard pick up changes within
-        // their next regulation check cycle (≤ 60 s).
         invalidateRegulationsCache();
         showSuccess('Pengaturan regulasi berhasil disimpan');
         setRegulationDirty(false);
@@ -250,21 +301,64 @@ const Settings = () => {
     showSuccess('Tracker laporan berhasil direset');
   };
 
-  // Rates / Users / Blacklist handlers
-
   const handleSaveRate = async (rate) => {
     try {
-      await adminService.updateRate(rate.vehicleType, {
-        ratePerHour:         rate.ratePerHour,
-        dailyMax:            rate.dailyMax,
-        gracePeriodMinutes:  rate.gracePeriodMinutes,
-        lostTicketFee:       rate.lostTicketFee,
-      });
+      setSavingRate(prev => ({ ...prev, [rate.vehicleType]: true }));
+
+      const toggleState = rateToggles[rate.vehicleType] || {};
+      const editedRate = rateEditValues[rate.vehicleType] || rate;
+      const updateData = {
+        ratePerHour: editedRate.ratePerHour,
+        gracePeriodMinutes: editedRate.gracePeriodMinutes,
+        dailyMax: toggleState.dailyMaxEnabled ? editedRate.dailyMax : 0,
+        lostTicketFee: toggleState.lostTicketFeeEnabled ? editedRate.lostTicketFee : 0,
+      };
+
+      await adminService.updateRate(rate.vehicleType, updateData);
       showSuccess('Tarif berhasil diperbarui');
+
+      invalidateCache('rates');
+
+      setRateCardOriginalValues(prev => ({
+        ...prev,
+        [rate.vehicleType]: { ...updateData, ...toggleState }
+      }));
+      setRateCardDirty(prev => ({ ...prev, [rate.vehicleType]: false }));
       loadTabData('rates');
     } catch {
       showError('Gagal memperbarui tarif');
+    } finally {
+      setSavingRate(prev => ({ ...prev, [rate.vehicleType]: false }));
     }
+  };
+
+  const handleSaveGlobalLostFee = async () => {
+    try {
+      setSavingGlobalFee(true);
+      await adminService.updateSettings({ globalLostTicketFee: parseInt(globalLostFee) });
+      showSuccess('Biaya tiket hilang global berhasil diperbarui');
+      invalidateCache('rates', 'settings');
+    } catch {
+      showError('Gagal menyimpan biaya tiket hilang global');
+    } finally {
+      setSavingGlobalFee(false);
+    }
+  };
+
+  const handleToggleRateOption = (vehicleType, option) => {
+    setRateToggles(prev => ({
+      ...prev,
+      [vehicleType]: {
+        ...prev[vehicleType],
+        [option]: !prev[vehicleType]?.[option]
+      }
+    }));
+    setRateCardDirty(prev => ({ ...prev, [vehicleType]: true }));
+  };
+
+  const isGlobalFeeLocked = () => {
+    const original = rateCardOriginalValues;
+    return rates.some(rate => original[rate.vehicleType]?.lostTicketFeeEnabled === true);
   };
 
   const handleToggleUser = async (user) => {
@@ -276,25 +370,13 @@ const Settings = () => {
     try {
       await adminService.updateUser(user.id, { isActive: !user.isActive });
       showSuccess('Pengguna berhasil diperbarui');
+      invalidateCache('users');
       loadTabData('users');
     } catch {
       showError('Gagal memperbarui pengguna');
     }
   };
 
-  const handleRemoveBlacklist = async (item) => {
-    const result = await showConfirm(`Hapus ${item.plateNumber} dari blacklist?`, 'Konfirmasi');
-    if (!result.isConfirmed) return;
-    try {
-      await adminService.removeFromBlacklist(item.id);
-      showSuccess('Berhasil dihapus dari blacklist');
-      loadTabData('blacklist');
-    } catch {
-      showError('Gagal menghapus dari blacklist');
-    }
-  };
-
-  // Discard unsaved regulation changes and reload from cache/server
   const handleCancelRegulations = useCallback(async () => {
     invalidateRegulationsCache();
     setRegulationsLoading(true);
@@ -309,12 +391,89 @@ const Settings = () => {
     }
   }, []);
 
+  const handleManualBackup = async () => {
+    try {
+      setBackupLoading(true);
+      const res = await backupService.triggerBackup();
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+
+      const contentDisposition = res.headers['content-disposition'];
+      let fileName = 'backup.zip';
+      if (contentDisposition) {
+        const fileNameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (fileNameMatch && fileNameMatch.length === 2) fileName = fileNameMatch[1];
+      }
+
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      showSuccess('Backup berhasil diunduh');
+      loadTabData('database');
+    } catch {
+      showError('Gagal membuat backup');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!importFile) return showError('Pilih file backup terlebih dahulu');
+
+    if (importFile.size > 50 * 1024 * 1024) {
+      return showError('Ukuran file maksimal 50MB');
+    }
+
+    const result = await showConfirm(
+      'Apakah Anda yakin ingin memulihkan database dari file ini? Ini akan menimpa seluruh data sistem saat ini dan tidak dapat dibatalkan.',
+      'Konfirmasi Restore', 'Ya, Restore', 'Batal', 'warning'
+    );
+
+    if (!result.isConfirmed) return;
+
+    try {
+      setImportLoading(true);
+      const formData = new FormData();
+      formData.append('backupFile', importFile);
+
+      await backupService.importDatabase(formData);
+      showSuccess('Database berhasil dipulihkan');
+      setImportFile(null);
+
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (error) {
+      showError(error.response?.data?.message || 'Gagal memulihkan database');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleSaveAutoBackup = async () => {
+    try {
+      setSavingAutoBackup(true);
+      await backupService.configureAutoBackup(autoBackupConfig);
+      showSuccess('Pengaturan backup otomatis berhasil disimpan');
+      invalidateCache('backupStatus');
+      loadTabData('database');
+    } catch {
+      showError('Gagal menyimpan pengaturan backup otomatis');
+    } finally {
+      setSavingAutoBackup(false);
+    }
+  };
+
   const tabs = [
-    { id: 'general',     label: 'Umum',      icon: 'fa-cog',        badge: generalDirty },
-    { id: 'rates',       label: 'Tarif',     icon: 'fa-money-bill' },
-    { id: 'users',       label: 'Pengguna',  icon: 'fa-users' },
-    { id: 'blacklist',   label: 'Blacklist', icon: 'fa-ban' },
-    { id: 'regulations', label: 'Regulasi',  icon: 'fa-shield-alt', badge: regulationDirty },
+    { id: 'general', label: 'Umum', icon: 'fa-cog', badge: generalDirty },
+    { id: 'rates', label: 'Tarif', icon: 'fa-money-bill' },
+    { id: 'users', label: 'Pengguna', icon: 'fa-users' },
+    { id: 'regulations', label: 'Regulasi', icon: 'fa-shield-alt', badge: regulationDirty },
+    { id: 'database', label: 'Kelola Database', icon: 'fa-database' },
   ];
 
   const scheduledPreview = (() => {
@@ -330,11 +489,11 @@ const Settings = () => {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-[#e8eef7] to-slate-100">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="lg:ml-[260px]">
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <header className="bg-white/95 backdrop-blur-sm border-b border-slate-200/80 sticky top-0 z-10 shadow-sm shadow-slate-900/5">
           <div className="flex items-center px-5 py-3 gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -342,23 +501,22 @@ const Settings = () => {
             >
               <i className="fas fa-bars text-gray-600 text-sm"></i>
             </button>
-            <h1 className="text-lg font-bold text-gray-900">Pengaturan</h1>
+            <h1 className="text-lg font-bold text-slate-900 font-display tracking-tight">Pengaturan</h1>
           </div>
         </header>
 
         <div className="p-5">
           {/* Tabs */}
-          <div className="bg-white rounded-xl shadow-sm mb-5">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200/60 mb-5">
             <div className="flex border-b overflow-x-auto">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${
-                    activeTab === tab.id
-                      ? 'text-blue-600 border-b-2 border-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
+                  className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab.id
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                    }`}
                 >
                   <i className={`fas ${tab.icon}`}></i>
                   {tab.label}
@@ -370,7 +528,7 @@ const Settings = () => {
             </div>
           </div>
 
-          {/* General Tab */}
+          {/* ── General Tab ── */}
           {activeTab === 'general' && (
             loading ? <Loading text="Memuat..." /> : (
               <div className="space-y-5">
@@ -416,7 +574,7 @@ const Settings = () => {
                         type="text"
                         value={generalSettings.parking_name}
                         onChange={(e) => updateGeneral('parking_name', e.target.value)}
-                        placeholder="Smart Parking"
+                        placeholder="Nama Area Parkir"
                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <p className="text-xs text-gray-400 mt-1">Muncul sebagai judul di bagian atas tiket cetak</p>
@@ -460,14 +618,12 @@ const Settings = () => {
                       </div>
                       {activeCount !== null && (
                         <div className="flex-shrink-0 mt-6 text-center">
-                          <div className={`w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 ${
-                            capacityPct >= 90 ? 'border-red-400 bg-red-50' :
+                          <div className={`w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 ${capacityPct >= 90 ? 'border-red-400 bg-red-50' :
                             capacityPct >= 70 ? 'border-amber-400 bg-amber-50' : 'border-green-400 bg-green-50'
-                          }`}>
-                            <span className={`text-xl font-bold leading-none ${
-                              capacityPct >= 90 ? 'text-red-600' :
+                            }`}>
+                            <span className={`text-xl font-bold leading-none ${capacityPct >= 90 ? 'text-red-600' :
                               capacityPct >= 70 ? 'text-amber-600' : 'text-green-600'
-                            }`}>{capacityPct}%</span>
+                              }`}>{capacityPct}%</span>
                             <span className="text-xs text-gray-500 mt-0.5">terisi</span>
                           </div>
                           <p className="text-xs text-gray-500 mt-1.5">
@@ -486,6 +642,32 @@ const Settings = () => {
                   </div>
                 </div>
 
+                {/* Activity Logs */}
+                <div className="mt-8 pt-6 border-t border-gray-200">
+                  <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center">
+                          <i className="fas fa-history text-purple-600"></i>
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-sm text-gray-900">Riwayat Aktivitas</h3>
+                          <p className="text-xs text-gray-500 mt-0.5">Log semua aktivitas sistem dan pengguna</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <button
+                        onClick={() => setShowActivityLogs(true)}
+                        className="w-full px-4 py-3 text-sm bg-purple-50 text-purple-700 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors flex items-center justify-center gap-2 font-medium"
+                      >
+                        <i className="fas fa-external-link-alt"></i>Tampilkan Semua Log
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FIX 1: Save / Cancel buttons now live INSIDE the general tab block */}
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     onClick={() => { loadGeneral(); setGeneralDirty(false); }}
@@ -510,54 +692,209 @@ const Settings = () => {
             )
           )}
 
-          {/* Rates Tab */}
+          {/* ── Rates Tab ── */}
           {activeTab === 'rates' && (
             loading ? <Loading text="Memuat..." /> : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {rates.map((rate) => (
-                  <div key={rate.id} className="bg-white rounded-xl p-5 shadow-sm">
-                    <div className="flex items-center gap-2.5 mb-4">
-                      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
-                        <i className={`fas ${
-                          rate.vehicleType === 'motorcycle' ? 'fa-motorcycle' :
-                          rate.vehicleType === 'car'        ? 'fa-car' :
-                          rate.vehicleType === 'suv'        ? 'fa-car-side' : 'fa-truck'
-                        } text-blue-600`}></i>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {rates.map((rate) => {
+                    const toggles = rateToggles[rate.vehicleType] || { lostTicketFeeEnabled: false, dailyMaxEnabled: false };
+                    // All cards share the same expanded state
+                    const isExpanded = rateCardsExpanded;
+                    const isDirty = rateCardDirty[rate.vehicleType] || false;
+
+                    return (
+                      <div key={rate.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+                        {/* Header */}
+                        <button
+                          type="button"
+                          onClick={() => setRateCardsExpanded(prev => !prev)}
+                          className="w-full px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+                              <i className={`fas text-sm ${rate.vehicleType === 'motorcycle' ? 'fa-motorcycle' : 'fa-car'} text-blue-600`}></i>
+                            </div>
+                            <div className="text-left">
+                              <h3 className="font-semibold text-xs text-gray-900">{vehicleTypeMap[rate.vehicleType]}</h3>
+                              <p className="text-xs text-gray-500">Rp {parseInt(rate.ratePerHour || 0).toLocaleString('id-ID')}/jam</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isDirty && (
+                              <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded">Berubah</span>
+                            )}
+                            <i className={`fas fa-chevron-down text-sm text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}></i>
+                          </div>
+                        </button>
+
+                        {/* Expandable content */}
+                        {isExpanded && (
+                          <div className="p-4 space-y-3 border-t border-gray-100">
+                            {/* Rate per Hour */}
+                            <div>
+                              <label className="block text-xs text-gray-500 font-medium mb-1">Tarif per Jam (Rp)</label>
+                              <input
+                                type="number" step="500" min="0"
+                                value={rateEditValues[rate.vehicleType]?.ratePerHour || 0}
+                                onChange={(e) => {
+                                  setRateEditValues(prev => ({
+                                    ...prev,
+                                    [rate.vehicleType]: { ...prev[rate.vehicleType], ratePerHour: parseInt(e.target.value) || 0 }
+                                  }));
+                                  setRateCardDirty(prev => ({ ...prev, [rate.vehicleType]: true }));
+                                }}
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            {/* Grace Period */}
+                            <div>
+                              <label className="block text-xs text-gray-500 font-medium mb-1">Waktu Toleransi (menit)</label>
+                              <input
+                                type="number" step="1" min="0"
+                                value={rateEditValues[rate.vehicleType]?.gracePeriodMinutes || 0}
+                                onChange={(e) => {
+                                  setRateEditValues(prev => ({
+                                    ...prev,
+                                    [rate.vehicleType]: { ...prev[rate.vehicleType], gracePeriodMinutes: parseInt(e.target.value) || 0 }
+                                  }));
+                                  setRateCardDirty(prev => ({ ...prev, [rate.vehicleType]: true }));
+                                }}
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            {/* Daily Max Toggle */}
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="text-xs font-medium text-gray-700">Maksimum Harian</label>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={toggles.dailyMaxEnabled}
+                                  onClick={() => handleToggleRateOption(rate.vehicleType, 'dailyMaxEnabled')}
+                                  className={`relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${toggles.dailyMaxEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                                >
+                                  <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white transition ${toggles.dailyMaxEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
+                                </button>
+                              </div>
+                              {toggles.dailyMaxEnabled && (
+                                <input
+                                  type="number" step="500" min="0"
+                                  value={rateEditValues[rate.vehicleType]?.dailyMax || 0}
+                                  onChange={(e) => {
+                                    setRateEditValues(prev => ({
+                                      ...prev,
+                                      [rate.vehicleType]: { ...prev[rate.vehicleType], dailyMax: parseInt(e.target.value) || 0 }
+                                    }));
+                                    setRateCardDirty(prev => ({ ...prev, [rate.vehicleType]: true }));
+                                  }}
+                                  className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  placeholder="Maksimum per hari"
+                                />
+                              )}
+                            </div>
+
+                            {/* Lost Ticket Fee Toggle */}
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="text-xs font-medium text-gray-700">Biaya Tiket Hilang</label>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={toggles.lostTicketFeeEnabled}
+                                  onClick={() => handleToggleRateOption(rate.vehicleType, 'lostTicketFeeEnabled')}
+                                  className={`relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${toggles.lostTicketFeeEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+                                >
+                                  <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white transition ${toggles.lostTicketFeeEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
+                                </button>
+                              </div>
+                              {toggles.lostTicketFeeEnabled && (
+                                <input
+                                  type="number" step="1000" min="0"
+                                  value={rateEditValues[rate.vehicleType]?.lostTicketFee || 0}
+                                  onChange={(e) => {
+                                    setRateEditValues(prev => ({
+                                      ...prev,
+                                      [rate.vehicleType]: { ...prev[rate.vehicleType], lostTicketFee: parseInt(e.target.value) || 0 }
+                                    }));
+                                    setRateCardDirty(prev => ({ ...prev, [rate.vehicleType]: true }));
+                                  }}
+                                  className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  placeholder="Biaya tiket hilang"
+                                />
+                              )}
+                            </div>
+
+                            <button
+                              onClick={() => handleSaveRate(rate)}
+                              disabled={savingRate[rate.vehicleType] || !isDirty}
+                              className="w-full px-3 py-2 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5"
+                            >
+                              {savingRate[rate.vehicleType] ? (
+                                <><i className="fas fa-spinner fa-spin text-xs"></i>Menyimpan...</>
+                              ) : (
+                                <><i className="fas fa-save text-xs"></i>Simpan</>
+                              )}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <h3 className="font-semibold text-sm text-gray-900">{vehicleTypeMap[rate.vehicleType]}</h3>
+                    );
+                  })}
+                </div>
+
+                {/* Global Lost Ticket Fee */}
+                {/* FIX 3: locked description text changed to amber-700 for readability */}
+                <div className={`bg-white rounded-xl shadow-sm overflow-hidden border-2 ${isGlobalFeeLocked() ? 'border-gray-200 opacity-60' : 'border-red-100'}`}>
+                  <div className={`px-5 py-4 border-b flex items-center gap-3 ${isGlobalFeeLocked() ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${isGlobalFeeLocked() ? 'bg-amber-50' : 'bg-red-100'}`}>
+                      <i className={`fas fa-exclamation-circle ${isGlobalFeeLocked() ? 'text-amber-500' : 'text-red-600'}`}></i>
                     </div>
-                    <div className="space-y-3">
-                      {[
-                        { label: 'Tarif per Jam (Rp)',    key: 'ratePerHour',        step: '500' },
-                        { label: 'Maksimum Harian (Rp)',  key: 'dailyMax',           step: '500' },
-                        { label: 'Grace Period (menit)',  key: 'gracePeriodMinutes', step: '1'   },
-                      ].map(({ label, key, step }) => (
-                        <div key={key}>
-                          <label className="block text-xs text-gray-500 mb-1">{label}</label>
-                          <input
-                            type="number" step={step}
-                            defaultValue={rate[key]}
-                            onBlur={(e) => {
-                              rate[key] = step === '1' ? parseInt(e.target.value) : parseFloat(e.target.value);
-                            }}
-                            className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-                      ))}
-                      <button
-                        onClick={() => handleSaveRate(rate)}
-                        className="w-full px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        <i className="fas fa-save mr-1.5"></i>Simpan
-                      </button>
+                    <div>
+                      <h3 className={`font-semibold text-sm ${isGlobalFeeLocked() ? 'text-gray-700' : 'text-gray-900'}`}>
+                        Biaya Tiket Hilang Global
+                      </h3>
+                      {/* FIX 3: was text-gray-400 (nearly invisible) — now amber-700 when locked */}
+                      <p className={`text-xs mt-0.5 ${isGlobalFeeLocked() ? 'text-amber-700' : 'text-gray-500'}`}>
+                        {isGlobalFeeLocked()
+                          ? 'Nonaktifkan semua biaya tiket hilang per kendaraan untuk mengaktifkan'
+                          : 'Fallback jika biaya per kendaraan dinonaktifkan'}
+                      </p>
                     </div>
                   </div>
-                ))}
+                  <div className="p-5 space-y-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 font-medium mb-1.5">Biaya Tiket Hilang (Rp)</label>
+                      <input
+                        type="number" step="1000" min="0"
+                        value={globalLostFee}
+                        onChange={(e) => setGlobalLostFee(parseInt(e.target.value) || 0)}
+                        disabled={isGlobalFeeLocked()}
+                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-gray-50 disabled:cursor-not-allowed"
+                        placeholder="50000"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Format: Rp {parseInt(globalLostFee || 0).toLocaleString('id-ID')}</p>
+                    </div>
+                    <button
+                      onClick={handleSaveGlobalLostFee}
+                      disabled={savingGlobalFee || isGlobalFeeLocked()}
+                      className="w-full px-4 py-2.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                    >
+                      {savingGlobalFee ? (
+                        <><i className="fas fa-spinner fa-spin"></i>Menyimpan...</>
+                      ) : (
+                        <><i className="fas fa-save"></i>Simpan Biaya Global</>
+                      )}
+                    </button>
+                  </div>
+                </div>
               </div>
             )
           )}
 
-          {/* Users Tab */}
+          {/* ── Users Tab ── */}
           {activeTab === 'users' && (
             loading ? <Loading text="Memuat..." /> : (
               <div className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -581,18 +918,14 @@ const Settings = () => {
                             </span>
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
-                              user.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                            }`}>
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${user.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                               {user.isActive ? 'Aktif' : 'Nonaktif'}
                             </span>
                           </td>
                           <td className="px-3 py-2.5">
                             <button
                               onClick={() => handleToggleUser(user)}
-                              className={`text-xs font-medium ${
-                                user.isActive ? 'text-red-600 hover:text-red-700' : 'text-green-600 hover:text-green-700'
-                              }`}
+                              className={`text-xs font-medium ${user.isActive ? 'text-red-600 hover:text-red-700' : 'text-green-600 hover:text-green-700'}`}
                             >
                               {user.isActive ? 'Nonaktifkan' : 'Aktifkan'}
                             </button>
@@ -606,58 +939,7 @@ const Settings = () => {
             )
           )}
 
-          {/* Blacklist Tab */}
-          {activeTab === 'blacklist' && (
-            loading ? <Loading text="Memuat..." /> :
-            blacklist.length > 0 ? (
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-                <div className="overflow-x-auto text-sm">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b">
-                      <tr>
-                        {['Plat Nomor', 'Alasan', 'Level', 'Tanggal', 'Aksi'].map((h) => (
-                          <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {blacklist.map((item) => (
-                        <tr key={item.id} className="border-b hover:bg-gray-50 transition-colors">
-                          <td className="px-3 py-2.5 font-bold text-xs">{item.plateNumber}</td>
-                          <td className="px-3 py-2.5 text-xs text-gray-600">{item.reason || '-'}</td>
-                          <td className="px-3 py-2.5">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
-                              item.severity === 'high'   ? 'bg-red-100 text-red-700' :
-                              item.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                              'bg-blue-100 text-blue-700'
-                            }`}>{item.severity}</span>
-                          </td>
-                          <td className="px-3 py-2.5 text-xs text-gray-500">
-                            {new Date(item.createdAt).toLocaleDateString('id-ID')}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <button
-                              onClick={() => handleRemoveBlacklist(item)}
-                              className="text-red-600 hover:text-red-700 text-xs font-medium"
-                            >
-                              Hapus
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-white rounded-xl shadow-sm p-8 text-center text-gray-400">
-                <i className="fas fa-check-circle text-4xl mb-2 block text-green-400"></i>
-                <p className="text-sm">Tidak ada plat yang di-blacklist</p>
-              </div>
-            )
-          )}
-
-          {/* Regulations Tab */}
+          {/* ── Regulations Tab ── */}
           {activeTab === 'regulations' && (
             regulationsLoading ? <Loading text="Memuat regulasi..." /> : (
               <div className="space-y-5">
@@ -708,29 +990,21 @@ const Settings = () => {
                     />
 
                     <div className={`space-y-5 transition-opacity ${regulations.autoMarkLost.enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                      {/* Mode selector */}
                       <div>
                         <p className="text-sm font-medium text-gray-900 mb-2">Mode Regulasi</p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <button
                             onClick={() => updateRegulation('autoMarkLost', 'mode', 'daily')}
-                            className={`relative flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all ${
-                              regulations.autoMarkLost.mode === 'daily'
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-200 bg-white hover:border-blue-200'
-                            }`}
+                            className={`relative flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all ${regulations.autoMarkLost.mode === 'daily'
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-gray-200 bg-white hover:border-blue-200'
+                              }`}
                           >
-                            <div className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                              regulations.autoMarkLost.mode === 'daily' ? 'bg-blue-100' : 'bg-gray-100'
-                            }`}>
-                              <i className={`fas fa-redo text-sm ${
-                                regulations.autoMarkLost.mode === 'daily' ? 'text-blue-600' : 'text-gray-500'
-                              }`}></i>
+                            <div className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${regulations.autoMarkLost.mode === 'daily' ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                              <i className={`fas fa-redo text-sm ${regulations.autoMarkLost.mode === 'daily' ? 'text-blue-600' : 'text-gray-500'}`}></i>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-semibold ${
-                                regulations.autoMarkLost.mode === 'daily' ? 'text-blue-700' : 'text-gray-800'
-                              }`}>Harian (Berulang)</p>
+                              <p className={`text-sm font-semibold ${regulations.autoMarkLost.mode === 'daily' ? 'text-blue-700' : 'text-gray-800'}`}>Harian (Berulang)</p>
                               <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
                                 Jalankan setiap hari pada jam yang sama secara otomatis
                               </p>
@@ -742,35 +1016,27 @@ const Settings = () => {
 
                           <button
                             onClick={() => updateRegulation('autoMarkLost', 'mode', 'scheduled')}
-                            className={`relative flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all ${
-                              regulations.autoMarkLost.mode === 'scheduled'
-                                ? 'border-purple-500 bg-purple-50'
-                                : 'border-gray-200 bg-white hover:border-purple-200'
-                            }`}
+                            className={`relative flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all ${regulations.autoMarkLost.mode === 'scheduled'
+                              ? 'border-amber-500 bg-amber-50'
+                              : 'border-gray-200 bg-white hover:border-amber-200'
+                              }`}
                           >
-                            <div className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                              regulations.autoMarkLost.mode === 'scheduled' ? 'bg-purple-100' : 'bg-gray-100'
-                            }`}>
-                              <i className={`fas fa-calendar-alt text-sm ${
-                                regulations.autoMarkLost.mode === 'scheduled' ? 'text-purple-600' : 'text-gray-500'
-                              }`}></i>
+                            <div className={`mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${regulations.autoMarkLost.mode === 'scheduled' ? 'bg-amber-100' : 'bg-gray-100'}`}>
+                              <i className={`fas fa-calendar-alt text-sm ${regulations.autoMarkLost.mode === 'scheduled' ? 'text-amber-700' : 'text-gray-500'}`}></i>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-semibold ${
-                                regulations.autoMarkLost.mode === 'scheduled' ? 'text-purple-700' : 'text-gray-800'
-                              }`}>Terjadwal (Satu Kali)</p>
+                              <p className={`text-sm font-semibold ${regulations.autoMarkLost.mode === 'scheduled' ? 'text-amber-900' : 'text-gray-800'}`}>Terjadwal (Satu Kali)</p>
                               <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
                                 Jalankan satu kali pada tanggal &amp; jam tertentu
                               </p>
                             </div>
                             {regulations.autoMarkLost.mode === 'scheduled' && (
-                              <i className="fas fa-check-circle text-purple-500 text-sm absolute top-3 right-3"></i>
+                              <i className="fas fa-check-circle text-amber-600 text-sm absolute top-3 right-3"></i>
                             )}
                           </button>
                         </div>
                       </div>
 
-                      {/* Daily config */}
                       {regulations.autoMarkLost.mode === 'daily' && (
                         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-4">
                           <div>
@@ -795,19 +1061,18 @@ const Settings = () => {
                             <div className="flex flex-wrap gap-2 mt-3">
                               {[
                                 { label: 'Subuh (05:00)', value: '05:00' },
-                                { label: 'Pagi (07:00)',  value: '07:00' },
-                                { label: 'Pagi (08:00)',  value: '08:00' },
+                                { label: 'Pagi (07:00)', value: '07:00' },
+                                { label: 'Pagi (08:00)', value: '08:00' },
                                 { label: 'Siang (12:00)', value: '12:00' },
                                 { label: 'Tengah malam (00:00)', value: '00:00' },
                               ].map(({ label, value }) => (
                                 <button
                                   key={value}
                                   onClick={() => updateRegulation('autoMarkLost', 'cutoffTime', value)}
-                                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                                    regulations.autoMarkLost.cutoffTime === value
-                                      ? 'bg-blue-600 text-white border-blue-600'
-                                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
-                                  }`}
+                                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${regulations.autoMarkLost.cutoffTime === value
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                                    }`}
                                 >{label}</button>
                               ))}
                             </div>
@@ -821,12 +1086,11 @@ const Settings = () => {
                         </div>
                       )}
 
-                      {/* Scheduled config */}
                       {regulations.autoMarkLost.mode === 'scheduled' && (
-                        <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 space-y-4">
+                        <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-4">
                           <div>
                             <label className="block text-sm font-medium text-gray-900 mb-1">
-                              <i className="fas fa-calendar-alt text-purple-500 mr-1.5"></i>
+                              <i className="fas fa-calendar-alt text-amber-600 mr-1.5"></i>
                               Tanggal &amp; Waktu Eksekusi
                             </label>
                             <p className="text-xs text-gray-500 mb-3">
@@ -840,7 +1104,7 @@ const Settings = () => {
                                   type="date" min={getTodayStr()}
                                   value={regulations.autoMarkLost.scheduledDate}
                                   onChange={(e) => updateRegulation('autoMarkLost', 'scheduledDate', e.target.value)}
-                                  className="w-full px-3 py-2 text-sm border border-purple-200 bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                  className="w-full px-3 py-2 text-sm border border-amber-200 bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                                 />
                               </div>
                               <div>
@@ -849,36 +1113,32 @@ const Settings = () => {
                                   type="time"
                                   value={regulations.autoMarkLost.scheduledTime}
                                   onChange={(e) => updateRegulation('autoMarkLost', 'scheduledTime', e.target.value)}
-                                  className="w-full px-3 py-2 text-sm border border-purple-200 bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                  className="w-full px-3 py-2 text-sm border border-amber-200 bg-white rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
                                 />
                               </div>
                             </div>
                             <div className="mt-3">
                               <p className="text-xs text-gray-500 mb-2">Preset jam:</p>
                               <div className="flex flex-wrap gap-2">
-                                {['07:00','08:00','12:00','17:00','00:00'].map((value) => (
+                                {['07:00', '08:00', '12:00', '17:00', '00:00'].map((value) => (
                                   <button
                                     key={value}
                                     onClick={() => updateRegulation('autoMarkLost', 'scheduledTime', value)}
-                                    className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                                      regulations.autoMarkLost.scheduledTime === value
-                                        ? 'bg-purple-600 text-white border-purple-600'
-                                        : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
-                                    }`}
+                                    className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${regulations.autoMarkLost.scheduledTime === value
+                                      ? 'bg-[#1e3a5f] text-white border-[#1e3a5f]'
+                                      : 'bg-white text-gray-600 border-gray-200 hover:border-amber-300'
+                                      }`}
                                   >{value}</button>
                                 ))}
                               </div>
                             </div>
                           </div>
                           {scheduledPreview ? (
-                            <div className={`flex items-start gap-2.5 rounded-lg p-3 text-xs border ${
-                              scheduledPreview.isPast
-                                ? 'bg-red-50 border-red-200 text-red-700'
-                                : 'bg-white border-purple-100 text-purple-800'
-                            }`}>
-                              <i className={`fas mt-0.5 ${
-                                scheduledPreview.isPast ? 'fa-exclamation-triangle text-red-500' : 'fa-calendar-check text-purple-500'
-                              }`}></i>
+                            <div className={`flex items-start gap-2.5 rounded-lg p-3 text-xs border ${scheduledPreview.isPast
+                              ? 'bg-red-50 border-red-200 text-red-700'
+                              : 'bg-white border-amber-100 text-amber-900'
+                              }`}>
+                              <i className={`fas mt-0.5 ${scheduledPreview.isPast ? 'fa-exclamation-triangle text-red-500' : 'fa-calendar-check text-amber-600'}`}></i>
                               <span>
                                 {scheduledPreview.isPast ? (
                                   <><strong>Peringatan:</strong> Tanggal yang dipilih sudah lewat. Regulasi akan segera aktif dan menandai tiket saat ini.</>
@@ -888,8 +1148,8 @@ const Settings = () => {
                               </span>
                             </div>
                           ) : (
-                            <div className="bg-white border border-purple-100 rounded-lg p-3 text-xs text-gray-500">
-                              <i className="fas fa-info-circle mr-1.5 text-purple-400"></i>
+                            <div className="bg-white border border-amber-100 rounded-lg p-3 text-xs text-gray-500">
+                              <i className="fas fa-info-circle mr-1.5 text-amber-500"></i>
                               Pilih tanggal dan jam eksekusi untuk melihat pratinjau.
                             </div>
                           )}
@@ -954,11 +1214,10 @@ const Settings = () => {
                             <button
                               key={value}
                               onClick={() => updateRegulation('autoReport', 'reportTime', value)}
-                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
-                                regulations.autoReport.reportTime === value
-                                  ? 'bg-blue-600 text-white border-blue-600'
-                                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
-                              }`}
+                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${regulations.autoReport.reportTime === value
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                                }`}
                             >{label}</button>
                           ))}
                         </div>
@@ -1012,6 +1271,7 @@ const Settings = () => {
                   </div>
                 </div>
 
+                {/* FIX 1: these buttons now live INSIDE the regulations tab block */}
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     onClick={handleCancelRegulations}
@@ -1035,6 +1295,161 @@ const Settings = () => {
               </div>
             )
           )}
+
+          {/* ── Database Tab ── */}
+          {activeTab === 'database' && (
+            loading ? <Loading text="Memuat..." /> : (
+              <div className="space-y-6">
+
+                {/* Manual Backup */}
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
+                      <i className="fas fa-download text-blue-500"></i>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-sm text-gray-900">Backup Database</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Mencadangkan seluruh data sistem ke dalam file ZIP</p>
+                    </div>
+                  </div>
+                  <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm text-gray-700">Buat file backup baru secara manual.</p>
+                      <p className="text-xs text-gray-500 mt-1">Pastikan Anda menyimpan file ini di tempat yang aman.</p>
+                    </div>
+                    <button
+                      onClick={handleManualBackup}
+                      disabled={backupLoading}
+                      className="px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                    >
+                      {backupLoading ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-file-export"></i>}
+                      {backupLoading ? 'Memproses...' : 'Backup Sekarang'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Import / Restore */}
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-amber-100">
+                  <div className="px-5 py-4 border-b border-amber-50 bg-amber-50 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center">
+                      <i className="fas fa-upload text-amber-600"></i>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-sm text-amber-900">Restore Database</h3>
+                      <p className="text-xs text-amber-700 mt-0.5">Memulihkan data sistem dari file backup (.zip)</p>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 text-xs text-amber-800 flex items-start gap-2">
+                      <i className="fas fa-exclamation-triangle mt-0.5 text-amber-600"></i>
+                      <span><strong>Peringatan:</strong> Proses restore <strong>akan menimpa dan menghapus</strong> semua data yang ada di database sistem saat ini. Tidak dapat dibatalkan.</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">Pilih File Backup (ZIP)</label>
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                          type="file"
+                          accept=".zip,application/zip,application/x-zip-compressed"
+                          onChange={(e) => setImportFile(e.target.files[0])}
+                          className="flex-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 border border-gray-200 rounded-lg"
+                        />
+                        <button
+                          onClick={handleImport}
+                          disabled={!importFile || importLoading}
+                          className="px-5 py-2.5 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                        >
+                          {importLoading ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-file-import"></i>}
+                          {importLoading ? 'Memulihkan...' : 'Restore Data'}
+                        </button>
+                      </div>
+                      {importFile && (
+                        <p className="text-xs text-gray-500 mt-2">File terpilih: {importFile.name} ({(importFile.size / 1024).toFixed(2)} KB)</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Auto Backup Config */}
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center">
+                      <i className="fas fa-sync-alt text-green-500"></i>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-sm text-gray-900">Backup Otomatis</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">Mengaktifkan pencadangan berjalan secara berkala</p>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-5">
+                    <ToggleSwitch
+                      checked={autoBackupConfig.isEnabled}
+                      onChange={(v) => setAutoBackupConfig(prev => ({ ...prev, isEnabled: v }))}
+                      label="Aktifkan Backup Otomatis"
+                      description="Sistem akan menyalin database sesuai dengan interval yang ditentukan."
+                    />
+
+                    <div className={`transition-opacity ${autoBackupConfig.isEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">Interval Waktu Backup</label>
+                      <select
+                        value={autoBackupConfig.interval}
+                        onChange={(e) => setAutoBackupConfig(prev => ({ ...prev, interval: e.target.value }))}
+                        className="w-full md:w-1/3 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                      >
+                        <option value="daily">Harian (Setiap Hari)</option>
+                        <option value="weekly">Mingguan (Setiap Minggu)</option>
+                        <option value="monthly">Bulanan (Setiap Bulan)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex justify-end pt-2 border-t border-gray-100">
+                      <button
+                        onClick={handleSaveAutoBackup}
+                        disabled={savingAutoBackup}
+                        className="px-5 py-2 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+                      >
+                        {savingAutoBackup ? <><i className="fas fa-spinner fa-spin"></i> Menyimpan...</> : <><i className="fas fa-save"></i> Simpan Pengaturan</>}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Card */}
+                {backupStatus && (
+                  <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-800">Status Backup Terakhir</h4>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-slate-600">
+                        <i className="far fa-calendar-alt"></i>
+                        <span>
+                          {backupStatus.lastBackupAt
+                            ? new Date(backupStatus.lastBackupAt).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })
+                            : 'Belum pernah dibackup'}
+                        </span>
+                      </div>
+                      {backupStatus.lastBackupFile && (
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-600">
+                          <i className="far fa-file-code"></i>
+                          <span>{backupStatus.lastBackupFile}</span>
+                        </div>
+                      )}
+                    </div>
+                    {backupStatus.lastBackupStatus && (
+                      <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${backupStatus.lastBackupStatus === 'success' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'
+                        }`}>
+                        {backupStatus.lastBackupStatus === 'success' ? 'Berhasil' : 'Gagal'}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            )
+          )}
+
+          <ActivityLogsModal
+            isOpen={activeTab === 'general' && showActivityLogs}
+            onClose={() => setShowActivityLogs(false)}
+          />
         </div>
       </div>
     </div>

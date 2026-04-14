@@ -8,7 +8,7 @@ const Rate = sequelize.define('Rate', {
         autoIncrement: true
     },
     vehicleType: {
-        type: DataTypes.ENUM('car', 'motorcycle', 'truck', 'suv'),
+        type: DataTypes.ENUM('car', 'motorcycle'),
         allowNull: false
     },
     ratePerHour: {
@@ -20,11 +20,6 @@ const Rate = sequelize.define('Rate', {
         type: DataTypes.DECIMAL(12, 2),
         allowNull: true,
         comment: 'Maximum daily charge in IDR'
-    },
-    firstHourRate: {
-        type: DataTypes.DECIMAL(12, 2),
-        allowNull: true,
-        comment: 'Special rate for first hour'
     },
     gracePeriodMinutes: {
         type: DataTypes.INTEGER,

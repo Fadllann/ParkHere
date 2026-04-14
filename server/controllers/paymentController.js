@@ -1,30 +1,60 @@
-const { body } = require('express-validator');
-const { Ticket, Payment, Rate, ActivityLog } = require('../models');
+const { body, param } = require('express-validator');
+const {
+    Ticket,
+    Payment,
+    Rate,
+    ActivityLog,
+    PlateCapture,
+    Setting,
+    CashierLog,
+    User
+} = require('../models');
+const barcodeService = require('../services/barcodeService');
+const imageService = require('../services/imageService');
+const pricingService = require('../services/pricingService');
+const cashierService = require('../services/cashierService');
 
 // Validation rules
 const processPaymentValidation = [
-    body('ticketId').isInt().withMessage('Valid ticket ID required'),
+    body('ticketId').isInt().withMessage('Tiket ID tidak valid'),
     body('paymentMethod')
-        .isIn(['cash', 'card', 'digital', 'monthly_pass'])
-        .withMessage('Invalid payment method'),
+        .isIn(['cash', 'card', 'digital'])
+        .withMessage('Metode pembayaran tidak valid'),
     body('amountPaid')
         .optional()
         .isFloat({ min: 0 })
-        .withMessage('Amount must be positive'),
-    body('discountCode')
+        .withMessage('Jumlah pembayaran harus positif'),
+    body('captureImageExit')
+        .optional()
+        .isString()
+        .withMessage('Foto keluar harus berupa string yang valid (base64)'),
+    body('notes')
         .optional()
         .trim()
 ];
 
-// Calculate parking fee
+// Calculate parking fee (GET query and/or POST JSON body)
 const calculateFee = async (req, res, next) => {
     try {
-        const { ticketId, ticketNumber, plateNumber } = req.query;
+        const source = {
+            ...req.query,
+            ...(req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {})
+        };
+        const { ticketId, ticketNumber, plateNumber, barcodeData } = source;
 
         let ticket;
 
         if (ticketId) {
             ticket = await Ticket.findByPk(ticketId);
+        } else if (barcodeData) {
+            const verified = barcodeService.verifyTicketBarcode(barcodeData);
+            if (!verified) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Invalid barcode data'
+                });
+            }
+            ticket = await Ticket.findOne({ where: { ticketNumber: verified.t } });
         } else if (ticketNumber) {
             ticket = await Ticket.findOne({ where: { ticketNumber } });
         } else if (plateNumber) {
@@ -39,14 +69,14 @@ const calculateFee = async (req, res, next) => {
         if (!ticket) {
             return res.status(404).json({
                 success: false,
-                message: 'Ticket not found'
+                message: 'Tiket tidak ditemukan'
             });
         }
 
         if (ticket.status !== 'active' && ticket.status !== 'lost') {
             return res.status(400).json({
                 success: false,
-                message: 'Ticket already processed'
+                message: 'Tiket sudah diproses'
             });
         }
 
@@ -56,14 +86,19 @@ const calculateFee = async (req, res, next) => {
         if (!rate) {
             return res.status(500).json({
                 success: false,
-                message: 'No active rate configured for this vehicle type'
+                message: 'Tidak ada tarif aktif yang dikonfigurasi untuk tipe kendaraan ini'
             });
         }
 
         const exitTime = new Date();
         const durationMinutes = Math.ceil((exitTime - ticket.entryTime) / (1000 * 60));
 
-        let amount = calculateAmount(durationMinutes, rate, ticket.status === 'lost');
+        const fee = await pricingService.calculateParkingFee(
+            durationMinutes,
+            ticket.vehicleType,
+            ticket.status === 'lost'
+        );
+        const amount = fee.amount;
 
         res.json({
             success: true,
@@ -86,7 +121,7 @@ const calculateFee = async (req, res, next) => {
                     isLostTicket: ticket.status === 'lost',
                     lostTicketFee: ticket.status === 'lost' ? rate.lostTicketFee : null,
                     amount,
-                    formattedAmount: `Rp. ${amount.toLocaleString('id-ID')}`
+                    formattedAmount: fee.formattedAmount
                 }
             }
         });
@@ -98,8 +133,96 @@ const calculateFee = async (req, res, next) => {
 // Process payment
 const processPayment = async (req, res, next) => {
     try {
-        const { ticketId, paymentMethod, amountPaid, discountCode, notes } = req.body;
+        const { ticketId, paymentMethod, amountPaid, notes, captureImageExit, isLostTicket, vehicleType } = req.body;
 
+        // Handle lost ticket flow
+        if (isLostTicket && vehicleType) {
+            // Lost ticket - create payment without existing ticket
+            const rate = await Rate.getActiveRate(vehicleType);
+            if (!rate) {
+                return res.status(500).json({
+                    success: false,
+                    message: 'Tidak ada tarif aktif yang dikonfigurasi untuk tipe kendaraan ini'
+                });
+            }
+
+            // Determine lost ticket fee: use per-vehicle fee if available, otherwise use global
+            let lostTicketFeeAmount = rate.lostTicketFee;
+            if (!lostTicketFeeAmount) {
+                const globalFee = await Setting.get('globalLostTicketFee', 200000);
+                lostTicketFeeAmount = parseInt(globalFee);
+            }
+
+            // Create orphan payment for lost ticket
+            const payment = await Payment.create({
+                ticketId: null,
+                amount: lostTicketFeeAmount,
+                paymentMethod,
+                durationMinutes: null,
+                rateApplied: 0,
+                operatorId: req.userId || null,
+                paidAt: new Date(),
+                notes: `Lost ticket - ${vehicleType}`,
+                isLostTicket: true,
+                lostTicketFee: lostTicketFeeAmount,
+                vehicleType: vehicleType
+            });
+
+            // Log activity
+            await ActivityLog.log({
+                userId: req.userId,
+                action: 'LOST_TICKET_PAYMENT',
+                entityType: 'payment',
+                entityId: payment.id,
+                details: {
+                    vehicleType,
+                    amount: lostTicketFeeAmount,
+                    paymentMethod
+                },
+                ipAddress: req.ip
+            });
+
+            const { row: ftLost, created: ftLostCreated } =
+                await cashierService.recordIncomeFromPayment({
+                    payment,
+                    createdBy: req.userId,
+                    description: `Lost ticket — ${vehicleType}`,
+                    referenceId: String(payment.id)
+                });
+            if (ftLostCreated) {
+                await ActivityLog.log({
+                    userId: req.userId,
+                    action: 'PAYMENT_INCOME',
+                    entityType: 'cashier_log',
+                    entityId: ftLost.id,
+                    details: {
+                        amount: parseFloat(payment.amount),
+                        type: 'income',
+                        referenceId: String(payment.id),
+                        paymentId: payment.id,
+                        cashierLogId: ftLost.id
+                    },
+                    ipAddress: req.ip
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'Tiket hilang berhasil diproses',
+                data: {
+                    payment: {
+                        id: payment.id,
+                        amount: payment.amount,
+                        formattedAmount: `Rp. ${payment.amount.toLocaleString('id-ID')}`,
+                        paymentMethod: payment.paymentMethod,
+                        paidAt: payment.paidAt,
+                        isLostTicket: true
+                    }
+                }
+            });
+        }
+
+        // Normal ticket payment flow
         const ticket = await Ticket.findByPk(ticketId, {
             include: [{ model: Payment, as: 'payment' }]
         });
@@ -107,21 +230,21 @@ const processPayment = async (req, res, next) => {
         if (!ticket) {
             return res.status(404).json({
                 success: false,
-                message: 'Ticket not found'
+                message: 'Tiket tidak ditemukan'
             });
         }
 
         if (ticket.payment) {
             return res.status(400).json({
                 success: false,
-                message: 'Ticket already paid'
+                message: 'Tiket sudah dibayar'
             });
         }
 
         if (ticket.status !== 'active' && ticket.status !== 'lost') {
             return res.status(400).json({
                 success: false,
-                message: 'Ticket cannot be processed'
+                message: 'Tiket tidak dapat diproses'
             });
         }
 
@@ -131,22 +254,18 @@ const processPayment = async (req, res, next) => {
         if (!rate) {
             return res.status(500).json({
                 success: false,
-                message: 'No active rate found'
+                message: 'Tidak ada tarif aktif yang dikonfigurasi untuk tipe kendaraan ini'
             });
         }
 
         const exitTime = new Date();
         const durationMinutes = Math.ceil((exitTime - ticket.entryTime) / (1000 * 60));
-        let amount = calculateAmount(durationMinutes, rate, ticket.status === 'lost');
-
-        // Apply discount if valid
-        let discountAmount = 0;
-        if (discountCode) {
-            // TODO: Implement discount code validation
-            // For now, just log it
-        }
-
-        const finalAmount = amount - discountAmount;
+        const fee = await pricingService.calculateParkingFee(
+            durationMinutes,
+            ticket.vehicleType,
+            ticket.status === 'lost'
+        );
+        const finalAmount = fee.amount;
 
         // Create payment record
         const payment = await Payment.create({
@@ -155,8 +274,6 @@ const processPayment = async (req, res, next) => {
             paymentMethod,
             durationMinutes,
             rateApplied: rate.ratePerHour,
-            discountAmount,
-            discountCode,
             operatorId: req.userId || null,
             paidAt: new Date(),
             notes
@@ -167,6 +284,26 @@ const processPayment = async (req, res, next) => {
             status: 'paid',
             exitTime
         });
+
+        // Save exit image if provided
+        if (captureImageExit) {
+            try {
+                const exitImagePath = imageService.saveBase64Image(captureImageExit, 'exit');
+                await ticket.update({ exitImagePath });
+
+                // Create PlateCapture record for exit image
+                await PlateCapture.create({
+                    ticketId: ticket.id,
+                    plateNumber: ticket.plateNumber,
+                    imagePath: exitImagePath,
+                    captureType: 'exit',
+                    capturedAt: new Date()
+                });
+            } catch (imageError) {
+                console.error('Error saving exit image:', imageError);
+                // Don't fail payment if image save fails; just log it
+            }
+        }
 
         // Log activity
         await ActivityLog.log({
@@ -183,13 +320,36 @@ const processPayment = async (req, res, next) => {
             ipAddress: req.ip
         });
 
+        const { row: ftRow, created: ftCreated } =
+            await cashierService.recordIncomeFromPayment({
+                payment,
+                createdBy: req.userId,
+                description: notes || `Payment — ${ticket.ticketNumber}`,
+                referenceId: ticket.ticketNumber
+            });
+        if (ftCreated) {
+            await ActivityLog.log({
+                userId: req.userId,
+                action: 'PAYMENT_INCOME',
+                entityType: 'cashier_log',
+                entityId: ftRow.id,
+                details: {
+                    amount: parseFloat(payment.amount),
+                    type: 'income',
+                    referenceId: ticket.ticketNumber,
+                    paymentId: payment.id,
+                    cashierLogId: ftRow.id
+                },
+                ipAddress: req.ip
+            });
+        }
+
         res.json({
             success: true,
-            message: 'Payment processed successfully',
+            message: 'Pembayaran berhasil diproses',
             data: {
                 payment: {
                     id: payment.id,
-                    receiptNumber: payment.receiptNumber,
                     amount: payment.amount,
                     formattedAmount: `Rp. ${payment.amount.toLocaleString('id-ID')}`,
                     paymentMethod: payment.paymentMethod,
@@ -212,7 +372,7 @@ const processPayment = async (req, res, next) => {
     }
 };
 
-// Get payment by ID or receipt number
+// Get payment by I
 const getPayment = async (req, res, next) => {
     try {
         const { identifier } = req.params;
@@ -233,7 +393,7 @@ const getPayment = async (req, res, next) => {
         if (!payment) {
             return res.status(404).json({
                 success: false,
-                message: 'Payment not found'
+                message: 'Pembayaran tidak ditemukan'
             });
         }
 
@@ -276,7 +436,7 @@ const getPaymentHistory = async (req, res, next) => {
             include: [{
                 model: Ticket,
                 as: 'ticket',
-                attributes: ['ticketNumber', 'plateNumber', 'vehicleType']
+                attributes: ['ticketNumber', 'plateNumber', 'vehicleType', 'exitImagePath']
             }],
             order: [['paidAt', 'DESC']],
             limit: parseInt(limit),
@@ -319,30 +479,6 @@ const getPaymentHistory = async (req, res, next) => {
     }
 };
 
-// Helper: Calculate amount
-function calculateAmount(durationMinutes, rate, isLostTicket) {
-    if (isLostTicket && rate.lostTicketFee) {
-        return parseFloat(rate.lostTicketFee);
-    }
-
-    const gracePeriod = rate.gracePeriodMinutes || 0;
-
-    if (durationMinutes <= gracePeriod) {
-        return 0;
-    }
-
-    const billableMinutes = durationMinutes - gracePeriod;
-    const hours = Math.ceil(billableMinutes / 60);
-
-    let amount = hours * parseFloat(rate.ratePerHour);
-
-    if (rate.dailyMax && amount > parseFloat(rate.dailyMax)) {
-        amount = parseFloat(rate.dailyMax);
-    }
-
-    return Math.round(amount);
-}
-
 // Helper: Format duration
 function formatDuration(minutes) {
     const hours = Math.floor(minutes / 60);
@@ -361,10 +497,90 @@ function formatDuration(minutes) {
     return `${mins} menit`;
 }
 
+const refundPaymentValidation = [
+    param('id').isInt().withMessage('Payment ID tidak valid'),
+    body('amount').isFloat({ gt: 0 }).withMessage('Jumlah refund harus lebih besar dari 0'),
+    body('description').optional().isString().trim()
+];
+
+const refundPayment = async (req, res, next) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const payment = await Payment.findByPk(id);
+        if (!payment) {
+            return res.status(404).json({ success: false, message: 'Pembayaran tidak ditemukan' });
+        }
+
+        const amount = parseFloat(req.body.amount);
+        const paid = parseFloat(payment.amount);
+        if (amount > paid) {
+            return res.status(400).json({
+                success: false,
+                message: `Jumlah refund tidak boleh melebihi jumlah pembayaran (${paid})`
+            });
+        }
+
+        const referenceId = `refund:payment:${id}:${Date.now()}`;
+        const row = await cashierService.createCashierLog({
+            type: 'outcome',
+            source: 'refund',
+            amount,
+            description: req.body.description || `Refund for payment #${id}`,
+            referenceId,
+            paymentId: null,
+            createdBy: req.userId || null
+        });
+
+        await ActivityLog.log({
+            userId: req.userId,
+            action: 'REFUND_OUTCOME',
+            entityType: 'cashier_log',
+            entityId: row.id,
+            details: {
+                amount,
+                type: 'outcome',
+                referenceId,
+                paymentId: id
+            },
+            ipAddress: req.ip
+        });
+
+        const full = await CashierLog.findByPk(row.id, {
+            include: [
+                { model: User, as: 'creator', attributes: ['id', 'username', 'fullName'] },
+                {
+                    model: Payment,
+                    as: 'payment',
+                    required: false,
+                    include: [{ model: Ticket, as: 'ticket', attributes: ['ticketNumber'] }]
+                }
+            ]
+        });
+
+        const j = full.toJSON();
+        res.json({
+            success: true,
+            message: 'Refund berhasil dicatat',
+            data: {
+                transaction: {
+                    ...j,
+                    amount: parseFloat(j.amount),
+                    balanceAfter: j.balanceAfter != null ? parseFloat(j.balanceAfter) : null,
+                    formattedAmount: `Rp. ${parseFloat(j.amount).toLocaleString('id-ID')}`
+                }
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     calculateFee,
     processPayment,
     getPayment,
     getPaymentHistory,
-    processPaymentValidation
+    processPaymentValidation,
+    refundPayment,
+    refundPaymentValidation
 };

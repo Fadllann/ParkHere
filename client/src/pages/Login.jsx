@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { showError } from '../utils/alerts';
+import BrandWordmark from '../components/common/BrandWordmark';
 
 const Login = () => {
     const navigate = useNavigate();
@@ -67,7 +68,7 @@ const Login = () => {
                     inset: 0;
                     background:
                         radial-gradient(ellipse 80% 60% at 20% 10%, rgba(0, 100, 255, 0.18) 0%, transparent 60%),
-                        radial-gradient(ellipse 60% 80% at 80% 90%, rgba(100, 40, 200, 0.15) 0%, transparent 55%),
+                        radial-gradient(ellipse 60% 80% at 80% 90%, rgba(30, 58, 95, 0.35) 0%, transparent 55%),
                         radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0, 200, 255, 0.06) 0%, transparent 70%),
                         linear-gradient(175deg, #0a1628 0%, #060d1a 45%, #0d0718 100%);
                     z-index: 0;
@@ -162,7 +163,7 @@ const Login = () => {
                     left: 12%;
                     opacity: 0.45;
                     animation: fadeCarIn 1.5s 0.8s ease forwards;
-                    filter: drop-shadow(0 8px 20px rgba(120, 80, 255, 0.3));
+                    filter: drop-shadow(0 8px 20px rgba(30, 58, 95, 0.35));
                 }
 
                 @keyframes fadeCarIn {
@@ -209,7 +210,7 @@ const Login = () => {
                 .orb-2 {
                     width: 280px;
                     height: 280px;
-                    background: radial-gradient(circle, rgba(140, 60, 255, 0.18) 0%, transparent 70%);
+                    background: radial-gradient(circle, rgba(251, 191, 36, 0.14) 0%, transparent 70%);
                     top: 30%;
                     right: -40px;
                     animation: orbDrift2 15s ease-in-out infinite;
@@ -274,7 +275,7 @@ const Login = () => {
                 .geo-2 {
                     width: 220px; height: 220px;
                     top: 40px; right: 110px;
-                    border-color: rgba(160, 80, 255, 0.14);
+                    border-color: rgba(245, 158, 11, 0.2);
                     animation-duration: 28s;
                     animation-direction: reverse;
                 }
@@ -314,7 +315,7 @@ const Login = () => {
                     width: 32px; height: 32px;
                     top: 15%;
                     left: 38%;
-                    border-color: rgba(180, 100, 255, 0.15);
+                    border-color: rgba(147, 197, 253, 0.2);
                     animation-duration: 10s;
                 }
 
@@ -443,17 +444,6 @@ const Login = () => {
                     line-height: 1.0;
                     letter-spacing: -0.03em;
                     margin-bottom: 0.5rem;
-                    background: linear-gradient(135deg, #ffffff 0%, rgba(180, 210, 255, 0.85) 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                    background-clip: text;
-                }
-
-                .brand-title-lg .highlight {
-                    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                    background-clip: text;
                 }
 
                 .brand-tagline {
@@ -514,11 +504,11 @@ const Login = () => {
                     width: 56px;
                     height: 56px;
                     border-radius: 16px;
-                    background: linear-gradient(135deg, rgba(60,120,255,0.25) 0%, rgba(140,60,255,0.2) 100%);
-                    border: 1px solid rgba(120, 180, 255, 0.25);
+                    background: linear-gradient(135deg, rgba(30, 58, 95, 0.45) 0%, rgba(15, 23, 42, 0.6) 100%);
+                    border: 1px solid rgba(251, 191, 36, 0.35);
                     margin-bottom: 1.5rem;
                     backdrop-filter: blur(10px);
-                    box-shadow: 0 0 30px rgba(60, 120, 255, 0.2);
+                    box-shadow: 0 0 28px rgba(30, 58, 95, 0.35);
                 }
 
                 .brand-logo-mark i {
@@ -532,7 +522,7 @@ const Login = () => {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    background: linear-gradient(160deg, #eef2f9 0%, #dbe4f3 50%, #cdd8ed 100%);
+                    background: var(--surface-page, linear-gradient(160deg, #e8eef7 0%, #f1f5f9 50%, #eef2f7 100%));
                     padding: 2rem 1.5rem;
                 }
 
@@ -572,10 +562,9 @@ const Login = () => {
                 }
 
                 .mobile-app-name {
-                    font-family: 'Outfit', sans-serif;
-                    font-size: 1.25rem;
-                    font-weight: 800;
-                    color: #0d1f3c;
+                    display: flex;
+                    justify-content: center;
+                    margin-top: 0.25rem;
                 }
 
                 /* Form headings */
@@ -691,8 +680,8 @@ const Login = () => {
                     letter-spacing: 0.01em;
                     cursor: pointer;
                     color: #fff;
-                    background: linear-gradient(135deg, #1a3a6b 0%, #0d1f3c 100%);
-                    box-shadow: 0 4px 18px rgba(13, 31, 60, 0.35);
+                    background: var(--primary-gradient, linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%));
+                    box-shadow: 0 4px 18px rgba(15, 23, 42, 0.35);
                     transition: box-shadow 0.25s ease, transform 0.25s ease, background 0.25s ease;
                     margin-top: 0.5rem;
                     display: flex;
@@ -713,8 +702,8 @@ const Login = () => {
 
                 .login-btn:hover:not(:disabled) {
                     transform: translateY(-2px);
-                    box-shadow: 0 8px 28px rgba(13, 31, 60, 0.45);
-                    background: linear-gradient(135deg, #1e4480 0%, #102244 100%);
+                    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.45), 0 0 0 1px rgba(251, 191, 36, 0.35);
+                    background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
                 }
 
                 .login-btn:active:not(:disabled) { transform: translateY(0); }
@@ -771,15 +760,15 @@ const Login = () => {
                     <div className="float-chips">
                         <div className="chip chip-spots">
                             <i className="fas fa-circle-check"></i>
-                            24 Spots Available
+                            Siap Pakai
                         </div>
                         <div className="chip chip-scan">
-                            <i className="fas fa-qrcode"></i>
-                            QR Scan Ready
+                            <i className="fas fa-barcode"></i>
+                            Scan Barcode Tiket
                         </div>
                         <div className="chip chip-live">
                             <span className="live-dot"></span>
-                            Live Tracking
+                            Pemantauan Langsung
                         </div>
                     </div>
 
@@ -837,8 +826,8 @@ const Login = () => {
                         {/* Parked car (faded, already there) */}
                         <div className="car-parked">
                             <svg width="140" height="70" viewBox="0 0 140 70" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <rect x="8" y="32" width="124" height="26" rx="5" fill="#3d2f6e" />
-                                <path d="M22 32 Q30 14 52 14 L92 14 Q115 14 120 32Z" fill="#4a3880" />
+                                <rect x="8" y="32" width="124" height="26" rx="5" fill="#1e293b" />
+                                <path d="M22 32 Q30 14 52 14 L92 14 Q115 14 120 32Z" fill="#334155" />
                                 <path d="M54 15 Q58 15 60 19 L58 30 L38 30 L40 19 Q44 15 54 15Z" fill="rgba(100,140,200,0.35)" />
                                 <path d="M62 15 L90 15 L90 30 L60 30Z" fill="rgba(100,140,200,0.3)" />
                                 <circle cx="34" cy="58" r="12" fill="#120f22" stroke="#2a2040" strokeWidth="1.5" />
@@ -857,31 +846,32 @@ const Login = () => {
 
                         <div className="brand-eyebrow">
                             <i className="fas fa-bolt"></i>
-                            Smart Parking System
+                            Sistem Parkir Cerdas
                         </div>
 
                         <h1 className="brand-title-lg">
-                            Park<br /><span className="highlight">Here.</span>
+                            <span className="text-gradient-park block">Park</span>
+                            <span className="text-gradient-here block">Here.</span>
                         </h1>
 
                         <p className="brand-tagline">
-                            Real-time lot monitoring, digital ticketing, and QR scanning — all in one command center.
+                            Pemantauan slot parkir secara real time dengan pencatatan kendaraan semua terintegrasi di satu sistem.
                         </p>
 
                         <div className="brand-stats">
                             <div className="stat-item">
-                                <div className="stat-num">98<span>%</span></div>
-                                <div className="stat-label">Uptime</div>
+                                <div className="stat-num">100<span>%</span></div>
+                                <div className="stat-label">Kinerja Terjaga</div>
                             </div>
                             <div className="stat-divider"></div>
                             <div className="stat-item">
-                                <div className="stat-num">3<span>s</span></div>
-                                <div className="stat-label">Check-in</div>
+                                <div className="stat-num">3<span> detik</span></div>
+                                <div className="stat-label">Waktu Check-in</div>
                             </div>
                             <div className="stat-divider"></div>
                             <div className="stat-item">
                                 <div className="stat-num">24<span>/7</span></div>
-                                <div className="stat-label">Live Monitor</div>
+                                <div className="stat-label">Pemantauan Langsung</div>
                             </div>
                         </div>
                     </div>
@@ -895,7 +885,9 @@ const Login = () => {
                             <div className="mobile-logo">
                                 <i className="fas fa-location-dot"></i>
                             </div>
-                            <div className="mobile-app-name">Park Here</div>
+                            <div className="mobile-app-name">
+                                <BrandWordmark size="lg" variant="dark" />
+                            </div>
                         </div>
 
                         <h2 className="login-heading">Selamat Datang Kembali</h2>

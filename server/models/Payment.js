@@ -9,7 +9,7 @@ const Payment = sequelize.define('Payment', {
     },
     ticketId: {
         type: DataTypes.INTEGER,
-        allowNull: false,
+        allowNull: true,
         references: {
             model: 'tickets',
             key: 'id'
@@ -20,31 +20,18 @@ const Payment = sequelize.define('Payment', {
         allowNull: false
     },
     paymentMethod: {
-        type: DataTypes.ENUM('cash', 'card', 'digital', 'monthly_pass'),
+        type: DataTypes.ENUM('cash', 'card', 'digital'),
         allowNull: false,
         defaultValue: 'cash'
     },
     durationMinutes: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: true
     },
     rateApplied: {
         type: DataTypes.DECIMAL(12, 2),
         allowNull: true,
         comment: 'Hourly rate applied at time of payment'
-    },
-    discountAmount: {
-        type: DataTypes.DECIMAL(12, 2),
-        defaultValue: 0
-    },
-    discountCode: {
-        type: DataTypes.STRING(50),
-        allowNull: true
-    },
-    receiptNumber: {
-        type: DataTypes.STRING(50),
-        allowNull: true,
-        unique: true
     },
     operatorId: {
         type: DataTypes.INTEGER,
@@ -62,20 +49,24 @@ const Payment = sequelize.define('Payment', {
     notes: {
         type: DataTypes.TEXT,
         allowNull: true
+    },
+    isLostTicket: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        comment: 'Whether this payment is for a lost ticket'
+    },
+    lostTicketFee: {
+        type: DataTypes.DECIMAL(12, 2),
+        allowNull: true,
+        comment: 'Amount charged for lost ticket'
+    },
+    vehicleType: {
+        type: DataTypes.ENUM('car', 'motorcycle'),
+        allowNull: true,
+        comment: 'Vehicle type for lost ticket payments'
     }
 }, {
     tableName: 'payments',
-    hooks: {
-        beforeCreate: (payment) => {
-            if (!payment.receiptNumber) {
-                // Generate receipt number: RCP-YYYYMMDD-XXXX
-                const date = new Date();
-                const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-                const random = Math.floor(1000 + Math.random() * 9000);
-                payment.receiptNumber = `RCP-${dateStr}-${random}`;
-            }
-        }
-    },
     indexes: [
         { fields: ['ticket_id'] },
         { fields: ['payment_method'] },

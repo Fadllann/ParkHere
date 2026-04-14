@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import BrandWordmark from './BrandWordmark';
 
 const Sidebar = ({ isOpen, onClose }) => {
     const location = useLocation();
@@ -8,18 +9,24 @@ const Sidebar = ({ isOpen, onClose }) => {
     const menuItems = [
         {
             title: 'Dashboard',
-            icon: 'fa-chart-line',
+            icon: 'fa-solid fa-house',
             path: '/admin',
-            roles: ['admin', 'operator', 'security']
+            roles: ['admin', 'operator']
+        },
+        {
+            title: 'Statistik',
+            icon: 'fa-chart-line',
+            path: '/admin/statistics',
+            roles: ['admin', 'operator']
         },
         {
             title: 'Tiket Aktif',
             icon: 'fa-ticket',
             path: '/admin/tickets',
-            roles: ['admin', 'operator', 'security']
+            roles: ['admin', 'operator']
         },
         {
-            title: 'Riwayat Pembayaran',
+            title: 'Arus Kas',
             icon: 'fa-money-bill-wave',
             path: '/admin/payments',
             roles: ['admin', 'operator']
@@ -33,8 +40,8 @@ const Sidebar = ({ isOpen, onClose }) => {
     ];
 
     const quickLinks = [
-        { title: 'Entry Kendaraan', icon: 'fa-arrow-right-to-bracket', path: '/entry' },
-        { title: 'Exit & Bayar', icon: 'fa-arrow-right-from-bracket', path: '/exit' }
+        { title: 'Buat Tiket Manual', icon: 'fa-arrow-right-to-bracket', path: '/entry' },
+        { title: 'Keluar & Bayar', icon: 'fa-arrow-right-from-bracket', path: '/exit' }
     ];
 
     const filteredMenu = menuItems.filter(
@@ -45,48 +52,30 @@ const Sidebar = ({ isOpen, onClose }) => {
 
     return (
         <>
-            {/* Overlay for mobile */}
             {isOpen && (
                 <div
                     className="fixed inset-0 bg-black/50 z-30 lg:hidden"
                     onClick={onClose}
+                    aria-hidden
                 />
             )}
 
-            {/* Sidebar */}
             <aside
                 className={`sidebar transform ${isOpen ? 'translate-x-0' : '-translate-x-full'
                     } lg:translate-x-0`}
             >
-                {/* Logo */}
                 <div className="p-6 border-b border-white/10">
-                    <Link to="/" className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                            <i className="fas fa-parking text-white text-lg"></i>
+                    <Link to="/" className="flex items-center gap-3" onClick={() => window.innerWidth < 1024 && onClose?.()}>
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-800 to-brand-navyMid flex items-center justify-center ring-1 ring-amber-400/35 shrink-0">
+                            <span className="text-white font-display font-extrabold text-sm">P</span>
                         </div>
-                        <div>
-                            <h1 className="text-white font-bold text-lg">Smart Parking</h1>
-                            <p className="text-white/50 text-xs">Management System</p>
+                        <div className="min-w-0 font-display">
+                            <BrandWordmark size="md" variant="light" />
+                            <p className="text-white/50 text-xs mt-0.5">Kelola Parkir</p>
                         </div>
                     </Link>
                 </div>
 
-                {/* User Info */}
-                <div className="p-4 mx-3 mt-4 rounded-xl bg-white/5">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center">
-                            <span className="text-white font-semibold">
-                                {user?.username?.charAt(0).toUpperCase()}
-                            </span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-white font-medium truncate">{user?.username}</p>
-                            <p className="text-white/50 text-sm capitalize">{user?.role}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Quick Links */}
                 <div className="px-3 mt-6">
                     <p className="text-white/40 text-xs font-semibold uppercase tracking-wider px-3 mb-2">
                         Aksi Cepat
@@ -96,17 +85,16 @@ const Sidebar = ({ isOpen, onClose }) => {
                             <Link
                                 key={link.path}
                                 to={link.path}
-                                className="flex flex-col items-center gap-1 p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                                className="flex flex-col items-center gap-1 p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-transparent hover:border-amber-400/20"
                             >
-                                <i className={`fas ${link.icon} text-blue-400`}></i>
-                                <span className="text-white/70 text-xs text-center">{link.title}</span>
+                                <i className={`fas ${link.icon} text-amber-400/90`} aria-hidden />
+                                <span className="text-white/70 text-xs text-center leading-tight">{link.title}</span>
                             </Link>
                         ))}
                     </div>
                 </div>
 
-                {/* Main Navigation */}
-                <nav className="mt-6 flex-1">
+                <nav className="mt-6 flex-1 pb-4">
                     <p className="text-white/40 text-xs font-semibold uppercase tracking-wider px-6 mb-2">
                         Menu
                     </p>
@@ -116,19 +104,19 @@ const Sidebar = ({ isOpen, onClose }) => {
                             to={item.path}
                             className={`sidebar-link ${isActive(item.path) ? 'active' : ''}`}
                         >
-                            <i className={`fas ${item.icon} w-5 text-center`}></i>
+                            <i className={`fas ${item.icon} w-5 text-center opacity-90`} aria-hidden />
                             <span>{item.title}</span>
                         </Link>
                     ))}
                 </nav>
 
-                {/* Logout Button */}
-                <div className="p-4 border-t border-white/10">
+                <div className="p-4 border-t border-white/10 mt-auto">
                     <button
+                        type="button"
                         onClick={logout}
-                        className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-colors"
+                        className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-red-300 hover:bg-red-500/10 transition-colors text-sm font-medium"
                     >
-                        <i className="fas fa-sign-out-alt w-5 text-center"></i>
+                        <i className="fas fa-sign-out-alt w-5 text-center" aria-hidden />
                         <span>Keluar</span>
                     </button>
                 </div>

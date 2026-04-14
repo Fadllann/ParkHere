@@ -7,6 +7,16 @@ export default {
     theme: {
         extend: {
             colors: {
+                brand: {
+                    navy: '#0f172a',
+                    navyMid: '#1e3a5f',
+                    sky: '#93c5fd',
+                    skySoft: 'rgba(180, 210, 255, 0.85)',
+                    amber: '#f59e0b',
+                    amberLight: '#fbbf24',
+                    page: '#e8eef7',
+                    page2: '#f1f5f9',
+                },
                 primary: {
                     50: '#eff6ff',
                     100: '#dbeafe',

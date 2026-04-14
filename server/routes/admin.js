@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Op, fn, col } = require('sequelize');
-const { Ticket, Payment, User, Rate, Blacklist, ActivityLog, Setting, MonthlyPass } = require('../models');
+const { Ticket, Payment, User, Rate, ActivityLog, Setting } = require('../models');
 const { authenticateToken, authorizeRoles } = require('../middleware/authMiddleware');
 const pricingService = require('../services/pricingService');
 
@@ -162,10 +162,10 @@ router.get('/rates', async (req, res, next) => {
 router.put('/rates/:vehicleType', authorizeRoles('admin'), async (req, res, next) => {
     try {
         const { vehicleType } = req.params;
-        const { ratePerHour, dailyMax, gracePeriodMinutes, lostTicketFee, firstHourRate } = req.body;
+        const { ratePerHour, dailyMax, gracePeriodMinutes, lostTicketFee } = req.body;
 
         const rate = await pricingService.updateRate(vehicleType, {
-            ratePerHour, dailyMax, gracePeriodMinutes, lostTicketFee, firstHourRate
+            ratePerHour, dailyMax, gracePeriodMinutes, lostTicketFee
         });
 
         await ActivityLog.log({
@@ -194,7 +194,7 @@ router.get('/settings', authorizeRoles('admin', 'operator'), async (req, res, ne
             settingsMap[s.settingKey] = s.settingValue;
         });
 
-        // Operators receive the full map — the auto-mark/auto-report logic
+        // Operators receive the full map the auto-mark/auto-report logic
         // on the client needs regulation keys, and capacity/parking name are
         // non-sensitive. If you want stricter access, filter here.
         res.json({ success: true, data: { settings: settingsMap } });
@@ -222,73 +222,6 @@ router.put('/settings', authorizeRoles('admin'), async (req, res, next) => {
         });
 
         res.json({ success: true, message: 'Settings updated' });
-    } catch (error) {
-        next(error);
-    }
-});
-
-/**
- * @route GET /api/admin/blacklist
- * @access Private (Admin, Operator)
- */
-router.get('/blacklist', async (req, res, next) => {
-    try {
-        const blacklist = await Blacklist.findAll({
-            where: { isActive: true },
-            include: [{ model: User, as: 'addedByUser', attributes: ['username'] }],
-            order: [['createdAt', 'DESC']]
-        });
-        res.json({ success: true, data: { blacklist } });
-    } catch (error) {
-        next(error);
-    }
-});
-
-/**
- * @route POST /api/admin/blacklist
- * @access Private (Admin, Security)
- */
-router.post('/blacklist', authorizeRoles('admin', 'security'), async (req, res, next) => {
-    try {
-        const { plateNumber, reason, severity, expiresAt } = req.body;
-
-        const entry = await Blacklist.create({
-            plateNumber, reason,
-            severity: severity || 'medium',
-            addedBy: req.userId,
-            expiresAt: expiresAt || null
-        });
-
-        await ActivityLog.log({
-            userId: req.userId, action: 'ADD_BLACKLIST', entityType: 'blacklist', entityId: entry.id,
-            details: { plateNumber, reason }, ipAddress: req.ip
-        });
-
-        res.status(201).json({ success: true, message: 'Plate added to blacklist', data: { entry } });
-    } catch (error) {
-        if (error.name === 'SequelizeUniqueConstraintError')
-            return res.status(409).json({ success: false, message: 'Plate already blacklisted' });
-        next(error);
-    }
-});
-
-/**
- * @route DELETE /api/admin/blacklist/:id
- * @access Private (Admin)
- */
-router.delete('/blacklist/:id', authorizeRoles('admin'), async (req, res, next) => {
-    try {
-        const entry = await Blacklist.findByPk(req.params.id);
-        if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' });
-
-        await entry.update({ isActive: false });
-
-        await ActivityLog.log({
-            userId: req.userId, action: 'REMOVE_BLACKLIST', entityType: 'blacklist', entityId: entry.id,
-            details: { plateNumber: entry.plateNumber }, ipAddress: req.ip
-        });
-
-        res.json({ success: true, message: 'Removed from blacklist' });
     } catch (error) {
         next(error);
     }

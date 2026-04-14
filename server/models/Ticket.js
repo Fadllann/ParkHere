@@ -13,7 +13,7 @@ const Ticket = sequelize.define('Ticket', {
         allowNull: false,
         unique: true
     },
-    qrCodeData: {
+    barcodeData: {
         type: DataTypes.TEXT,
         allowNull: false
     },
@@ -25,7 +25,7 @@ const Ticket = sequelize.define('Ticket', {
         }
     },
     vehicleType: {
-        type: DataTypes.ENUM('car', 'motorcycle', 'truck', 'suv'),
+        type: DataTypes.ENUM('car', 'motorcycle'),
         allowNull: false,
         defaultValue: 'car'
     },
@@ -44,10 +44,6 @@ const Ticket = sequelize.define('Ticket', {
     },
     exitImagePath: {
         type: DataTypes.STRING(255),
-        allowNull: true
-    },
-    parkingSpot: {
-        type: DataTypes.STRING(20),
         allowNull: true
     },
     status: {
