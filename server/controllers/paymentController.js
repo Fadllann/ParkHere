@@ -1,5 +1,6 @@
 const { body, param } = require('express-validator');
 const {
+    sequelize,
     Ticket,
     Payment,
     Rate,
@@ -30,7 +31,11 @@ const processPaymentValidation = [
         .withMessage('Foto keluar harus berupa string yang valid (base64)'),
     body('notes')
         .optional()
-        .trim()
+        .trim(),
+    body('isWorkerFree')
+        .optional()
+        .isBoolean()
+        .withMessage('Flag gratis karyawan harus berupa boolean')
 ];
 
 // Calculate parking fee (GET query and/or POST JSON body)
@@ -133,7 +138,7 @@ const calculateFee = async (req, res, next) => {
 // Process payment
 const processPayment = async (req, res, next) => {
     try {
-        const { ticketId, paymentMethod, amountPaid, notes, captureImageExit, isLostTicket, vehicleType } = req.body;
+        const { ticketId, paymentMethod, amountPaid, notes, captureImageExit, isLostTicket, vehicleType, isWorkerFree } = req.body;
 
         // Handle lost ticket flow
         if (isLostTicket && vehicleType) {
@@ -153,19 +158,31 @@ const processPayment = async (req, res, next) => {
                 lostTicketFeeAmount = parseInt(globalFee);
             }
 
-            // Create orphan payment for lost ticket
-            const payment = await Payment.create({
-                ticketId: null,
-                amount: lostTicketFeeAmount,
-                paymentMethod,
-                durationMinutes: null,
-                rateApplied: 0,
-                operatorId: req.userId || null,
-                paidAt: new Date(),
-                notes: `Lost ticket - ${vehicleType}`,
-                isLostTicket: true,
-                lostTicketFee: lostTicketFeeAmount,
-                vehicleType: vehicleType
+            let payment;
+            const { row: ftLost, created: ftLostCreated } = await sequelize.transaction(async (t) => {
+                payment = await Payment.create(
+                    {
+                        ticketId: null,
+                        amount: lostTicketFeeAmount,
+                        paymentMethod,
+                        durationMinutes: null,
+                        rateApplied: 0,
+                        operatorId: req.userId || null,
+                        paidAt: new Date(),
+                        notes: `Lost ticket - ${vehicleType}`,
+                        isLostTicket: true,
+                        lostTicketFee: lostTicketFeeAmount,
+                        vehicleType: vehicleType
+                    },
+                    { transaction: t }
+                );
+                return cashierService.recordIncomeFromPayment({
+                    payment,
+                    createdBy: req.userId,
+                    description: `Lost ticket — ${vehicleType}`,
+                    referenceId: String(payment.id),
+                    transaction: t
+                });
             });
 
             // Log activity
@@ -182,13 +199,6 @@ const processPayment = async (req, res, next) => {
                 ipAddress: req.ip
             });
 
-            const { row: ftLost, created: ftLostCreated } =
-                await cashierService.recordIncomeFromPayment({
-                    payment,
-                    createdBy: req.userId,
-                    description: `Lost ticket — ${vehicleType}`,
-                    referenceId: String(payment.id)
-                });
             if (ftLostCreated) {
                 await ActivityLog.log({
                     userId: req.userId,
@@ -265,27 +275,45 @@ const processPayment = async (req, res, next) => {
             ticket.vehicleType,
             ticket.status === 'lost'
         );
-        const finalAmount = fee.amount;
+        const finalAmount = isWorkerFree ? 0 : fee.amount;
+        const normalizedNotes = isWorkerFree
+            ? `[WORKER_FREE] ${notes ? String(notes).trim() : 'Gratis karyawan'}`
+            : (notes ? String(notes).trim() : null);
 
-        // Create payment record
-        const payment = await Payment.create({
-            ticketId: ticket.id,
-            amount: finalAmount,
-            paymentMethod,
-            durationMinutes,
-            rateApplied: rate.ratePerHour,
-            operatorId: req.userId || null,
-            paidAt: new Date(),
-            notes
+        let payment;
+        const { row: ftRow, created: ftCreated } = await sequelize.transaction(async (t) => {
+            payment = await Payment.create(
+                {
+                    ticketId: ticket.id,
+                    amount: finalAmount,
+                    paymentMethod,
+                    durationMinutes,
+                    rateApplied: rate.ratePerHour,
+                    operatorId: req.userId || null,
+                    paidAt: new Date(),
+                    notes: normalizedNotes
+                },
+                { transaction: t }
+            );
+
+            await ticket.update(
+                {
+                    status: 'paid',
+                    exitTime
+                },
+                { transaction: t }
+            );
+
+            return cashierService.recordIncomeFromPayment({
+                payment,
+                createdBy: req.userId,
+                description: normalizedNotes || `Payment — ${ticket.ticketNumber}`,
+                referenceId: ticket.ticketNumber,
+                transaction: t
+            });
         });
 
-        // Update ticket
-        await ticket.update({
-            status: 'paid',
-            exitTime
-        });
-
-        // Save exit image if provided
+        // Save exit image if provided (best-effort after payment commits)
         if (captureImageExit) {
             try {
                 const exitImagePath = imageService.saveBase64Image(captureImageExit, 'exit');
@@ -315,18 +343,12 @@ const processPayment = async (req, res, next) => {
                 ticketNumber: ticket.ticketNumber,
                 amount: finalAmount,
                 paymentMethod,
-                durationMinutes
+                durationMinutes,
+                isWorkerFree: !!isWorkerFree
             },
             ipAddress: req.ip
         });
 
-        const { row: ftRow, created: ftCreated } =
-            await cashierService.recordIncomeFromPayment({
-                payment,
-                createdBy: req.userId,
-                description: notes || `Payment — ${ticket.ticketNumber}`,
-                referenceId: ticket.ticketNumber
-            });
         if (ftCreated) {
             await ActivityLog.log({
                 userId: req.userId,
@@ -355,7 +377,8 @@ const processPayment = async (req, res, next) => {
                     paymentMethod: payment.paymentMethod,
                     durationMinutes: payment.durationMinutes,
                     formattedDuration: formatDuration(durationMinutes),
-                    paidAt: payment.paidAt
+                    paidAt: payment.paidAt,
+                    isWorkerFree: !!isWorkerFree
                 },
                 ticket: {
                     ticketNumber: ticket.ticketNumber,
@@ -436,7 +459,7 @@ const getPaymentHistory = async (req, res, next) => {
             include: [{
                 model: Ticket,
                 as: 'ticket',
-                attributes: ['ticketNumber', 'plateNumber', 'vehicleType', 'exitImagePath']
+                attributes: ['ticketNumber', 'plateNumber', 'vehicleType', 'entryImagePath', 'exitImagePath']
             }],
             order: [['paidAt', 'DESC']],
             limit: parseInt(limit),

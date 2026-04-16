@@ -30,6 +30,7 @@ const Exit = () => {
     const [cashReceived, setCashReceived] = useState('');
     const [change, setChange] = useState(0);
     const [paymentNotes, setPaymentNotes] = useState('');
+    const [isWorkerFree, setIsWorkerFree] = useState(false);
 
     const amountInputRef = useRef(null);
     const lastDetectionRef = useRef(null);
@@ -180,7 +181,7 @@ const Exit = () => {
 
     const handlePayment = async () => {
         const received = parseInt(cashReceived.replace(/\D/g, ''), 10) || 0;
-        const finalAmount = calculation.amount;
+        const finalAmount = isWorkerFree ? 0 : (calculation.amount || 0);
         
         if (received < finalAmount) {
             showError(`Uang diterima kurang dari total bayar! (Kurang: Rp ${(finalAmount - received).toLocaleString('id-ID')})`);
@@ -188,6 +189,7 @@ const Exit = () => {
         }
 
         const result = await showConfirm(
+            'Lanjutkan pembayaran tunai untuk tiket ini?',
             'Konfirmasi Pembayaran',
             'Bayar',
             'Batal'
@@ -203,8 +205,10 @@ const Exit = () => {
                 ticketId: ticket.id,
                 paymentMethod: 'cash',
                 amountPaid: received,
+                notes: paymentNotes?.trim() || null,
                 isLostTicket: isLostTicket,
-                vehicleType: isLostTicket ? selectedLostVehicleType : null
+                vehicleType: isLostTicket ? selectedLostVehicleType : null,
+                isWorkerFree
             };
 
             // Add exit image if captured
@@ -251,6 +255,7 @@ const Exit = () => {
         setSelectedLostVehicleType(null);
         setLostTicketFeeAmount(0);
         setPaymentNotes('');
+        setIsWorkerFree(false);
         setStep(1);
     };
 
@@ -304,26 +309,26 @@ const Exit = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-900 text-slate-200 font-sans">
+        <div className="min-h-screen bg-slate-100 text-slate-800 font-sans">
 
             <div className="max-w-6xl mx-auto px-4 py-8">
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-8 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-4 mb-8 pb-4 border-b border-slate-200">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
                         <i className="fas fa-arrow-right-from-bracket text-white text-xl"></i>
                     </div>
                     <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Post Keluar</h1>
-                        <p className="text-slate-400 text-sm">Validasi tiket & pembayaran</p>
+                        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Post Keluar</h1>
+                        <p className="text-slate-500 text-sm">Validasi tiket & pembayaran</p>
                     </div>
                 </div>
 
                 {/* Step 1: Search */}
                 {step === 1 && (
                     <div className="max-w-xl mx-auto animate-fade-in">
-                        <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-8 shadow-xl shadow-black/50">
+                        <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
                             
-                            <h2 className="text-lg font-semibold text-white mb-6 text-center">Identifikasi Kendaraan Keluar</h2>
+                            <h2 className="text-lg font-semibold text-slate-900 mb-6 text-center">Identifikasi Kendaraan Keluar</h2>
                             
                             {/* Barcode scanner button */}
                             <button
@@ -349,9 +354,9 @@ const Exit = () => {
                             )}
 
                             <div className="flex items-center gap-4 my-6">
-                                <div className="h-px bg-slate-700 flex-1"></div>
+                                <div className="h-px bg-slate-200 flex-1"></div>
                                 <span className="text-slate-500 text-sm font-medium uppercase tracking-wider">Atau Cari Manual</span>
-                                <div className="h-px bg-slate-700 flex-1"></div>
+                                <div className="h-px bg-slate-200 flex-1"></div>
                             </div>
 
                             {/* Search Mode Toggle */}
@@ -362,7 +367,7 @@ const Exit = () => {
                                     className={`flex-1 py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
                                         searchMode === 'ticket' && !isLostTicket
                                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50'
-                                            : 'bg-slate-700 text-slate-300 border border-slate-600'
+                                            : 'bg-slate-100 text-slate-700 border border-slate-300'
                                     }`}
                                 >
                                     <i className="fas fa-ticket"></i> Nomor Tiket
@@ -373,7 +378,7 @@ const Exit = () => {
                                     className={`flex-1 py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
                                         searchMode === 'plate' && !isLostTicket
                                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50'
-                                            : 'bg-slate-700 text-slate-300 border border-slate-600'
+                                            : 'bg-slate-100 text-slate-700 border border-slate-300'
                                     }`}
                                 >
                                     <i className="fas fa-car"></i> Plat Nomor
@@ -384,7 +389,7 @@ const Exit = () => {
                                     className={`flex-1 py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
                                         isLostTicket
                                             ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50'
-                                            : 'bg-slate-700 text-slate-300 border border-slate-600'
+                                            : 'bg-slate-100 text-slate-700 border border-slate-300'
                                     }`}
                                 >
                                     <i className="fas fa-exclamation-circle"></i> Tiket Hilang
@@ -394,7 +399,7 @@ const Exit = () => {
                             {/* Lost Ticket Flow */}
                             {isLostTicket ? (
                                 <div className="space-y-4">
-                                    <label className="block text-sm font-medium text-slate-400 mb-2">Pilih Tipe Kendaraan</label>
+                                    <label className="block text-sm font-medium text-slate-600 mb-2">Pilih Tipe Kendaraan</label>
                                     <div className="flex gap-3">
                                         <button
                                             type="button"
@@ -402,7 +407,7 @@ const Exit = () => {
                                             className={`flex-1 py-3 rounded-lg font-medium transition-all ${
                                                 selectedLostVehicleType === 'car'
                                                     ? 'bg-blue-500 text-white'
-                                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                             }`}
                                         >
                                             <i className="fas fa-car mr-2"></i>Mobil
@@ -413,15 +418,15 @@ const Exit = () => {
                                             className={`flex-1 py-3 rounded-lg font-medium transition-all ${
                                                 selectedLostVehicleType === 'motorcycle'
                                                     ? 'bg-blue-500 text-white'
-                                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                             }`}
                                         >
                                             <i className="fas fa-motorcycle mr-2"></i>Motor
                                         </button>
                                     </div>
                                     {selectedLostVehicleType && (
-                                        <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4 mt-4">
-                                            <p className="text-slate-300 text-sm mb-2">Biaya Tiket Hilang:</p>
+                                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mt-4">
+                                            <p className="text-slate-600 text-sm mb-2">Biaya Tiket Hilang:</p>
                                             <p className="text-2xl font-bold text-emerald-400">
                                                 Rp {lostTicketFeeAmount.toLocaleString('id-ID')}
                                             </p>
@@ -443,18 +448,18 @@ const Exit = () => {
                                 /* Normal ticket/plate search form */
                             <form onSubmit={handleSearch} className="space-y-6">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-2">
+                                    <label className="block text-sm font-medium text-slate-600 mb-2">
                                         {searchMode === 'ticket' ? 'Nomor Tiket (T-XXXXX)' : 'Nomor Plat (Cth: B 1234 ABC)'}
                                     </label>
                                     <div className="relative">
                                         <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                            <i className={`fas ${searchMode === 'ticket' ? 'fa-ticket' : 'fa-car'} text-slate-500`}></i>
+                                            <i className={`fas ${searchMode === 'ticket' ? 'fa-ticket' : 'fa-car'} text-slate-400`}></i>
                                         </div>
                                         <input
                                             type="text"
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value.toUpperCase())}
-                                            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-12 pr-4 py-4 text-white text-xl font-mono tracking-wider focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                                            className="w-full bg-white border border-slate-300 rounded-xl pl-12 pr-4 py-4 text-slate-900 text-xl font-mono tracking-wider focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                                             placeholder={searchMode === 'ticket' ? 'T-ABC12' : 'B 1234 ABC'}
                                             autoFocus
                                         />
@@ -488,12 +493,12 @@ const Exit = () => {
                             <div className="lg:col-span-7 space-y-6">
                             
                             {/* Entry Captured Image */}
-                            <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl overflow-hidden shadow-xl shadow-black/40">
-                                <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex justify-between items-center">
-                                    <h3 className="font-semibold text-white flex items-center gap-2">
+                            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+                                    <h3 className="font-semibold text-slate-900 flex items-center gap-2">
                                         <i className="fas fa-camera text-emerald-400"></i> Foto Saat Masuk
                                     </h3>
-                                    <span className="text-xs text-slate-400 bg-slate-900 px-2 py-1 rounded-md">
+                                    <span className="text-xs text-slate-500 bg-white border border-slate-200 px-2 py-1 rounded-md">
                                         {new Date(ticket.entryTime).toLocaleString('id-ID')}
                                     </span>
                                 </div>
@@ -511,7 +516,7 @@ const Exit = () => {
                                         />
                                     ) : null}
                                     {!ticket.entryImagePath && (
-                                        <div className="flex flex-col items-center text-slate-600">
+                                        <div className="flex flex-col items-center text-slate-500">
                                             <i className="fas fa-image text-4xl mb-2"></i>
                                             <p>Tidak ada foto dari gerbang masuk</p>
                                         </div>
@@ -524,24 +529,24 @@ const Exit = () => {
 
                             {/* Ticket Info Details */}
                             <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+                                <div className="bg-white border border-slate-200 rounded-xl p-4">
                                     <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Nomor Tiket</p>
-                                    <p className="text-xl font-mono font-bold text-white tracking-widest">{ticket.ticketNumber}</p>
+                                    <p className="text-xl font-mono font-bold text-slate-900 tracking-widest">{ticket.ticketNumber}</p>
                                 </div>
-                                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+                                <div className="bg-white border border-slate-200 rounded-xl p-4">
                                     <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Plat Nomor System</p>
                                     <p className="text-xl font-mono font-bold text-emerald-400 tracking-widest">{ticket.plateNumber}</p>
                                 </div>
-                                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+                                <div className="bg-white border border-slate-200 rounded-xl p-4">
                                     <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Jenis Kendaraan</p>
-                                    <p className="text-lg font-medium text-white capitalize flex items-center gap-2">
+                                    <p className="text-lg font-medium text-slate-900 capitalize flex items-center gap-2">
                                         <i className={`fas ${ticket.vehicleType === 'motorcycle' ? 'fa-motorcycle' : 'fa-car'} text-slate-500`}></i>
                                         {ticket.vehicleType}
                                     </p>
                                 </div>
-                                <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+                                <div className="bg-white border border-slate-200 rounded-xl p-4">
                                     <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Durasi</p>
-                                    <p className="text-lg font-medium text-white">{calculation.formattedDuration}</p>
+                                    <p className="text-lg font-medium text-slate-900">{calculation.formattedDuration}</p>
                                 </div>
                             </div>
 
@@ -551,8 +556,8 @@ const Exit = () => {
                         {/* Exit Photo Capture Section */}
                         <div className={isLostTicket ? '' : 'lg:col-span-5'}>
                         {!showExitCamera && !exitPhotoBase64 && (
-                            <div className={`${isLostTicket ? 'max-w-md mx-auto' : ''} bg-slate-800/50 border border-slate-700/50 rounded-2xl p-4 text-center`}>
-                                <p className="text-slate-400 text-sm mb-3">Abadikan kendaraan saat exit sebagai bukti?</p>
+                            <div className={`${isLostTicket ? 'max-w-md mx-auto' : ''} bg-white border border-slate-200 rounded-2xl p-4 text-center`}>
+                                <p className="text-slate-600 text-sm mb-3">Abadikan kendaraan saat exit sebagai bukti?</p>
                                 <button
                                     type="button"
                                     onClick={() => setShowExitCamera(true)}
@@ -573,7 +578,7 @@ const Exit = () => {
                                     className="w-full h-auto"
                                     style={{ aspectRatio: '16 / 9' }}
                                 />
-                                <div className="p-4 space-y-2 bg-slate-900">
+                                <div className="p-4 space-y-2 bg-slate-100">
                                     <button
                                         type="button"
                                         onClick={captureExitPhoto}
@@ -584,7 +589,7 @@ const Exit = () => {
                                     <button
                                         type="button"
                                         onClick={() => setShowExitCamera(false)}
-                                        className="w-full bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 rounded-lg"
+                                        className="w-full bg-slate-300 hover:bg-slate-400 text-slate-800 font-medium py-3 rounded-lg"
                                     >
                                         Batal
                                     </button>
@@ -595,14 +600,14 @@ const Exit = () => {
                         {exitPhotoBase64 && (
                             <div className={`${isLostTicket ? 'max-w-md mx-auto' : ''} rounded-2xl overflow-hidden border border-emerald-500/30`}>
                                 <img src={exitPhotoBase64} alt="Exit" className="w-full h-auto" style={{ aspectRatio: '16 / 9', objectFit: 'cover' }} />
-                                <div className="p-4 space-y-2 bg-slate-900">
+                                <div className="p-4 space-y-2 bg-slate-100">
                                     <p className="text-emerald-400 text-sm text-center flex items-center justify-center gap-2">
                                         <i className="fas fa-check-circle"></i> Foto exit tersimpan
                                     </p>
                                     <button
                                         type="button"
                                         onClick={retakeExitPhoto}
-                                        className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2 rounded-lg text-sm"
+                                        className="w-full bg-slate-300 hover:bg-slate-400 text-slate-700 font-medium py-2 rounded-lg text-sm"
                                     >
                                         Ambil Ulang
                                     </button>
@@ -613,11 +618,14 @@ const Exit = () => {
 
                         {/* Right Column: Cashier Terminal */}
                         <div className={isLostTicket ? '' : 'lg:col-span-5'}>
-                            <div className="bg-slate-800 border border-slate-700 rounded-3xl p-6 shadow-2xl shadow-black/60 sticky top-8">
+                            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm sticky top-8">
                                 
-                                <div className="text-center mb-6 bg-slate-900/50 border border-emerald-500/30 rounded-xl p-4">
-                                    <p className="text-slate-400 text-xs font-medium mb-2">TOTAL YANG HARUS DIBAYAR</p>
+                                <div className="text-center mb-6 bg-slate-50 border border-emerald-200 rounded-xl p-4">
+                                    <p className="text-slate-500 text-xs font-medium mb-2">TOTAL YANG HARUS DIBAYAR</p>
                                     <p className="text-3xl font-bold text-emerald-400 mb-2">Rp {calculation.amount?.toLocaleString('id-ID')}</p>
+                                    {isWorkerFree && (
+                                        <p className="text-xs text-blue-600 font-semibold mt-1">Mode Gratis Karyawan aktif (tagihan akan jadi Rp 0)</p>
+                                    )}
                                     {!isLostTicket && (
                                         <p className="text-xs text-slate-500">Tarif: Rp {calculation.ratePerHour?.toLocaleString('id-ID')}/jam  •  Durasi: {calculation.formattedDuration}</p>
                                     )}
@@ -630,21 +638,37 @@ const Exit = () => {
 
                                     {/* Payment Notes / Lost Ticket Reason */}
                                     <div>
-                                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                                        <label className="block text-sm font-medium text-slate-700 mb-2">
                                             {isLostTicket ? 'Alasan Tiket Hilang (Opsional)' : 'Catatan Pembayaran (Opsional)'}
                                         </label>
                                         <textarea
                                             value={paymentNotes}
                                             onChange={(e) => setPaymentNotes(e.target.value)}
-                                            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all resize-none"
+                                            className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-800 text-sm focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all resize-none"
                                             placeholder="Masukkan catatan..."
                                             rows="2"
                                         />
                                     </div>
+
+                                    {!isLostTicket && (
+                                        <label className="flex items-center gap-3 p-3 rounded-xl border border-blue-200 bg-blue-50 text-blue-900">
+                                            <input
+                                                type="checkbox"
+                                                checked={isWorkerFree}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setIsWorkerFree(checked);
+                                                    if (checked) setCashReceived('0');
+                                                }}
+                                                className="w-4 h-4 accent-blue-600"
+                                            />
+                                            <span className="text-sm font-medium">Gratis Karyawan (bebas biaya parkir)</span>
+                                        </label>
+                                    )}
                                     
                                     {/* Cash Input */}
                                     <div>
-                                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                                        <label className="block text-sm font-medium text-slate-700 mb-2">
                                             Nominal Uang Diterima (Rp)
                                         </label>
                                         <div className="relative">
@@ -656,7 +680,8 @@ const Exit = () => {
                                                 type="text"
                                                 value={formatRupiah(cashReceived)}
                                                 onChange={handleNominalChange}
-                                                className="w-full bg-slate-900 border-2 border-emerald-500/30 rounded-xl pl-12 pr-4 py-4 text-white text-2xl font-bold focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                                                disabled={isWorkerFree}
+                                                className="w-full bg-white border-2 border-emerald-300 rounded-xl pl-12 pr-4 py-4 text-slate-900 text-2xl font-bold focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
                                                 placeholder="0"
                                             />
                                         </div>
@@ -664,31 +689,31 @@ const Exit = () => {
 
                                     {/* Quick Cash Buttons */}
                                     <div className="grid grid-cols-3 gap-2">
-                                        <button type="button" onClick={() => setCashReceived((calculation.amount).toString())} className="bg-slate-700 hover:bg-slate-600 text-white text-sm py-2 rounded-lg transition-colors border border-slate-600">
+                                        <button type="button" disabled={isWorkerFree} onClick={() => setCashReceived((calculation.amount).toString())} className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm py-2 rounded-lg transition-colors border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed">
                                             Uang Pas
                                         </button>
-                                        <button type="button" onClick={() => addCash(10000)} className="bg-slate-700 hover:bg-slate-600 text-white text-sm py-2 rounded-lg transition-colors border border-slate-600">
+                                        <button type="button" disabled={isWorkerFree} onClick={() => addCash(10000)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm py-2 rounded-lg transition-colors border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed">
                                             +10rb
                                         </button>
-                                        <button type="button" onClick={() => addCash(50000)} className="bg-slate-700 hover:bg-slate-600 text-white text-sm py-2 rounded-lg transition-colors border border-slate-600">
+                                        <button type="button" disabled={isWorkerFree} onClick={() => addCash(50000)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm py-2 rounded-lg transition-colors border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed">
                                             +50rb
                                         </button>
-                                        <button type="button" onClick={() => addCash(20000)} className="bg-slate-700 hover:bg-slate-600 text-white text-sm py-2 rounded-lg transition-colors border border-slate-600">
+                                        <button type="button" disabled={isWorkerFree} onClick={() => addCash(20000)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm py-2 rounded-lg transition-colors border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed">
                                             +20rb
                                         </button>
-                                        <button type="button" onClick={() => addCash(100000)} className="bg-slate-700 hover:bg-slate-600 text-white text-sm py-2 rounded-lg transition-colors border border-slate-600">
+                                        <button type="button" disabled={isWorkerFree} onClick={() => addCash(100000)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm py-2 rounded-lg transition-colors border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed">
                                             +100rb
                                         </button>
-                                        <button type="button" onClick={() => setCashReceived('')} className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 text-sm py-2 rounded-lg transition-colors border border-rose-500/30">
+                                        <button type="button" onClick={() => setCashReceived(isWorkerFree ? '0' : '')} className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 text-sm py-2 rounded-lg transition-colors border border-rose-500/30">
                                             Reset
                                         </button>
                                     </div>
 
                                     {/* Change / Kembalian */}
-                                    <div className={`p-4 rounded-xl border ${change > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-900 border-slate-700'}`}>
+                                    <div className={`p-4 rounded-xl border ${change > 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-50 border-slate-200'}`}>
                                         <div className="flex justify-between items-center">
-                                            <span className="text-slate-400 font-medium">Kembalian</span>
-                                            <span className={`text-2xl font-bold ${change > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                            <span className="text-slate-600 font-medium">Kembalian</span>
+                                            <span className={`text-2xl font-bold ${change > 0 ? 'text-emerald-500' : 'text-slate-500'}`}>
                                                 Rp {change.toLocaleString('id-ID')}
                                             </span>
                                         </div>
@@ -706,7 +731,7 @@ const Exit = () => {
                                     <div className="flex flex-col gap-3 pt-4">
                                         <button
                                             onClick={handlePayment}
-                                            disabled={loading || !exitPhotoBase64 || (parseInt(cashReceived.replace(/\D/g, ''), 10) || 0) < (calculation.amount || 0)}
+                                            disabled={loading || !exitPhotoBase64 || (!isWorkerFree && (parseInt(cashReceived.replace(/\D/g, ''), 10) || 0) < (calculation.amount || 0))}
                                             className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold text-lg py-4 rounded-xl shadow-lg shadow-emerald-500/30 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
                                             {loading ? (
@@ -718,7 +743,7 @@ const Exit = () => {
 
                                         <button
                                             onClick={handleNewSearch}
-                                            className="w-full bg-transparent hover:bg-slate-700 text-slate-300 font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                                            className="w-full bg-transparent hover:bg-slate-100 text-slate-600 font-medium py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
                                         >
                                             <i className="fas fa-arrow-left"></i> Kembali / Batal
                                         </button>
@@ -732,36 +757,45 @@ const Exit = () => {
                 {/* Step 3: Receipt */}
                 {step === 3 && payment && (
                     <div className="max-w-md mx-auto animate-fade-in">
-                        <div className="bg-slate-800 border border-slate-700 rounded-3xl p-8 shadow-2xl shadow-black/50 text-center relative overflow-hidden">
+                        <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm text-center relative overflow-hidden">
                             
                             <div className="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
                                 <i className="fas fa-check text-4xl text-emerald-400"></i>
                             </div>
                             
-                            <h2 className="text-2xl font-bold text-white mb-2">Pembayaran Sukses</h2>
-                            <p className="text-slate-400 font-mono mb-8">{ticket.ticketNumber}</p>
+                            <h2 className="text-2xl font-bold text-slate-900 mb-2">Pembayaran Sukses</h2>
+                            <p className="text-slate-500 font-mono mb-8">{ticket.ticketNumber}</p>
 
-                            <div className="space-y-4 mb-8 text-left bg-slate-900 p-6 rounded-xl border border-slate-700">
-                                <div className="flex justify-between border-b border-slate-800 pb-2">
-                                    <span className="text-slate-400">Total Tagihan</span>
-                                    <span className="text-white font-bold">{calculation.formattedAmount}</span>
+                            <div className="space-y-4 mb-8 text-left bg-slate-50 p-6 rounded-xl border border-slate-200">
+                                <div className="flex justify-between border-b border-slate-200 pb-2">
+                                    <span className="text-slate-500">Total Tagihan</span>
+                                    <span className="text-slate-900 font-bold">{calculation.formattedAmount}</span>
                                 </div>
-                                <div className="flex justify-between border-b border-slate-800 pb-2">
-                                    <span className="text-slate-400">Total Bayar</span>
-                                    <span className="text-emerald-400 font-bold">Rp {calculation.amount.toLocaleString('id-ID')}</span>
+                                <div className="flex justify-between border-b border-slate-200 pb-2">
+                                    <span className="text-slate-500">Total Bayar</span>
+                                    <span className="text-emerald-400 font-bold">
+                                        Rp {(payment?.isWorkerFree ? 0 : (calculation.amount || 0)).toLocaleString('id-ID')}
+                                    </span>
                                 </div>
-                                <div className="flex justify-between border-b border-slate-800 pb-2">
-                                    <span className="text-slate-400">Tunai Diterima</span>
-                                    <span className="text-white">Rp {payment.cashReceived?.toLocaleString('id-ID')}</span>
+                                <div className="flex justify-between border-b border-slate-200 pb-2">
+                                    <span className="text-slate-500">Tunai Diterima</span>
+                                    <span className="text-slate-900">Rp {payment.cashReceived?.toLocaleString('id-ID')}</span>
                                 </div>
                                 <div className="flex justify-between pb-2">
-                                    <span className="text-slate-400">Kembali</span>
+                                    <span className="text-slate-500">Kembali</span>
                                     <span className="text-emerald-400 font-bold">Rp {payment.changeGiven?.toLocaleString('id-ID')}</span>
                                 </div>
                                 {paymentNotes && (
-                                    <div className="border-t border-slate-800 pt-2 mt-2">
+                                    <div className="border-t border-slate-200 pt-2 mt-2">
                                         <p className="text-slate-500 text-xs mb-1">Catatan:</p>
-                                        <p className="text-slate-300 text-sm">{paymentNotes}</p>
+                                        <p className="text-slate-700 text-sm">{paymentNotes}</p>
+                                    </div>
+                                )}
+                                {payment?.isWorkerFree && (
+                                    <div className="border-t border-slate-200 pt-2 mt-2">
+                                        <p className="text-blue-700 text-xs font-semibold">
+                                            Transaksi diproses sebagai Gratis Karyawan
+                                        </p>
                                     </div>
                                 )}
                             </div>
@@ -784,7 +818,7 @@ const Exit = () => {
                 {/* Back Link */}
                 {step === 1 && (
                     <div className="text-center mt-12 no-print">
-                        <Link to="/" className="text-slate-500 hover:text-slate-300 transition-colors inline-flex items-center gap-2 font-medium">
+                        <Link to="/" className="text-slate-500 hover:text-slate-700 transition-colors inline-flex items-center gap-2 font-medium">
                             <i className="fas fa-arrow-left"></i>
                             Kembali ke Beranda Utama
                         </Link>

@@ -4,6 +4,7 @@ const { Op, fn, col } = require('sequelize');
 const { Ticket, Payment, User, Rate, ActivityLog, Setting } = require('../models');
 const { authenticateToken, authorizeRoles } = require('../middleware/authMiddleware');
 const pricingService = require('../services/pricingService');
+const { getParkingCapacityLimits } = require('../utils/capacitySettings');
 
 router.use(authenticateToken);
 
@@ -22,6 +23,10 @@ router.get('/dashboard', async (req, res, next) => {
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
         const activeTickets = await Ticket.count({ where: { status: 'active' } });
+        const [activeMotorcycles, activeCars] = await Promise.all([
+            Ticket.count({ where: { status: 'active', vehicleType: 'motorcycle' } }),
+            Ticket.count({ where: { status: 'active', vehicleType: 'car' } })
+        ]);
 
         const todayTickets = await Ticket.count({
             where: { entryTime: { [Op.gte]: today, [Op.lt]: tomorrow } }
@@ -52,15 +57,49 @@ router.get('/dashboard', async (req, res, next) => {
             include: [{ model: User, as: 'user', attributes: ['username'] }]
         });
 
-        const maxCapacity = await Setting.get('max_capacity', 100);
+        const caps = await getParkingCapacityLimits();
+        const maxMoto = caps.maxCapacityMotorcycle;
+        const maxCar = caps.maxCapacityCar;
+        const legacyMax = parseInt(await Setting.get('max_capacity', 100), 10) || 100;
+
+        const motoPct = maxMoto > 0 ? Math.round((activeMotorcycles / maxMoto) * 100) : 0;
+        const carPct = maxCar > 0 ? Math.round((activeCars / maxCar) * 100) : 0;
+
+        const emergencySince = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        const entryEmergencies = await ActivityLog.findAll({
+            where: {
+                action: 'ENTRY_EMERGENCY',
+                createdAt: { [Op.gte]: emergencySince }
+            },
+            order: [['createdAt', 'DESC']],
+            limit: 25,
+            attributes: ['id', 'createdAt', 'details', 'ipAddress']
+        });
 
         res.json({
             success: true,
             data: {
                 activeTickets,
-                availableSpots: maxCapacity - activeTickets,
-                maxCapacity,
-                occupancyPercent: Math.round((activeTickets / maxCapacity) * 100),
+                activeMotorcycles,
+                activeCars,
+                maxCapacityMotorcycle: maxMoto,
+                maxCapacityCar: maxCar,
+                motorcycleOccupancyPercent: Math.min(motoPct, 100),
+                carOccupancyPercent: Math.min(carPct, 100),
+                availableSpotsMotorcycle: Math.max(0, maxMoto - activeMotorcycles),
+                availableSpotsCar: Math.max(0, maxCar - activeCars),
+                // Legacy aggregate (total active vs sum of caps — informational)
+                maxCapacity: legacyMax,
+                availableSpots: Math.max(0, maxCar + maxMoto - activeTickets),
+                occupancyPercent: maxCar + maxMoto > 0
+                    ? Math.round((activeTickets / (maxCar + maxMoto)) * 100)
+                    : 0,
+                entryEmergencies: entryEmergencies.map((e) => ({
+                    id: e.id,
+                    createdAt: e.createdAt,
+                    ipAddress: e.ipAddress,
+                    details: e.details
+                })),
                 today: {
                     tickets: todayTickets,
                     payments: todayPayments,

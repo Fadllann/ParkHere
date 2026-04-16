@@ -45,7 +45,9 @@ const seedData = async () => {
         // Create default settings
         // General settings
         const defaultSettings = [
-            { key: 'max_capacity',      value: 100,                              description: 'Maximum parking capacity',          category: 'general' },
+            { key: 'max_capacity',      value: 100,                              description: 'Legacy total capacity (fallback if per-type unset)', category: 'general' },
+            { key: 'max_capacity_car', value: 60,                               description: 'Maximum concurrent cars',           category: 'general' },
+            { key: 'max_capacity_motorcycle', value: 40,                        description: 'Maximum concurrent motorcycles',   category: 'general' },
             { key: 'parking_name',      value: 'ParkHere',                  description: 'Parking facility name',             category: 'general' },
             { key: 'parking_address',   value: 'Alamat',    description: 'Parking address',                   category: 'general' },
             { key: 'enable_lpr',        value: true,                             description: 'Enable license plate recognition',  category: 'general' },

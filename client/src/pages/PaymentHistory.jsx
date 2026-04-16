@@ -34,6 +34,12 @@ const formatRupiah = (num) => {
     return `Rp. ${n.toLocaleString('id-ID')}`;
 };
 
+const toImageUrl = (path) => {
+    if (!path) return null;
+    if (/^https?:\/\//i.test(path)) return path;
+    return path.startsWith('/') ? path : `/${path}`;
+};
+
 const PaymentHistory = () => {
     const { user } = useAuth();
     const isAdmin = user?.role === 'admin';
@@ -76,7 +82,7 @@ const PaymentHistory = () => {
             setTotalPages(data.pagination?.totalPages || 1);
         } catch (err) {
             console.error('Error fetching transactions:', err);
-            showError('Gagal memuat arus kas');
+            showError('Gagal memuat riwayat transaksi');
         } finally {
             setLoading(false);
         }
@@ -216,8 +222,7 @@ const PaymentHistory = () => {
 
     const exitPathForRow = (row) => {
         const path = row.payment?.ticket?.exitImagePath;
-        if (!path) return null;
-        return path.startsWith('/') ? path : `/${path}`;
+        return toImageUrl(path);
     };
 
     return (
@@ -236,7 +241,7 @@ const PaymentHistory = () => {
                                 <i className="fas fa-bars text-gray-600 text-sm" />
                             </button>
                             <h1 className="text-lg font-bold text-slate-900 font-display tracking-tight">
-                                Arus Kas
+                                Riwayat Transaksi
                             </h1>
                         </div>
                         {isAdmin && (
@@ -320,7 +325,7 @@ const PaymentHistory = () => {
                     </div>
 
                     {loading ? (
-                        <Loading text="Memuat arus kas..." />
+                        <Loading text="Memuat riwayat transaksi..." />
                     ) : (
                         <>
                             <div className="bg-white rounded-xl overflow-hidden text-sm border border-slate-200/60 shadow-sm">

@@ -17,6 +17,7 @@ const ticketRoutes = require('./routes/tickets');
 const paymentRoutes = require('./routes/payments');
 const adminRoutes = require('./routes/admin');
 const exitRoutes = require('./routes/exit');
+const entryPublicRoutes = require('./routes/entry');
 const backupRoutes = require('./routes/backup');
 const transactionRoutes = require('./routes/transactions');
 
@@ -75,6 +76,7 @@ app.get('/api/health', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/entry', entryPublicRoutes);
 app.use('/api/exit', exitRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/transactions', transactionRoutes);

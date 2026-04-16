@@ -14,20 +14,14 @@ const Sidebar = ({ isOpen, onClose }) => {
             roles: ['admin', 'operator']
         },
         {
-            title: 'Statistik',
-            icon: 'fa-chart-line',
-            path: '/admin/statistics',
-            roles: ['admin', 'operator']
-        },
-        {
             title: 'Tiket Aktif',
             icon: 'fa-ticket',
             path: '/admin/tickets',
             roles: ['admin', 'operator']
         },
         {
-            title: 'Arus Kas',
-            icon: 'fa-money-bill-wave',
+            title: 'Riwayat Transaksi',
+            icon: 'fa-file-invoice-dollar',
             path: '/admin/payments',
             roles: ['admin', 'operator']
         },
@@ -80,7 +74,7 @@ const Sidebar = ({ isOpen, onClose }) => {
                     <p className="text-white/40 text-xs font-semibold uppercase tracking-wider px-3 mb-2">
                         Aksi Cepat
                     </p>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {quickLinks.map((link) => (
                             <Link
                                 key={link.path}

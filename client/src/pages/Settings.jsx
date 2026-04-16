@@ -81,11 +81,13 @@ const Settings = () => {
   const [generalSettings, setGeneralSettings] = useState({
     parking_name: '',
     parking_address: '',
-    max_capacity: 100,
+    max_capacity_car: 60,
+    max_capacity_motorcycle: 40,
   });
   const [generalDirty, setGeneralDirty] = useState(false);
   const [savingGeneral, setSavingGeneral] = useState(false);
-  const [activeCount, setActiveCount] = useState(null);
+  /** Active counts per type (from dashboard) */
+  const [activeByType, setActiveByType] = useState({ car: null, motorcycle: null });
 
   // Rates / Users
   const [rates, setRates] = useState([]);
@@ -126,12 +128,23 @@ const Settings = () => {
         getCachedSettings(fetchSettingsData),
         getCachedDashboard(fetchDashboardData),
       ]);
+      const legacy = parseInt(settings.max_capacity, 10) || 100;
+      const half = Math.max(1, Math.floor(legacy / 2));
       setGeneralSettings({
         parking_name: settings.parking_name || '',
         parking_address: settings.parking_address || '',
-        max_capacity: settings.max_capacity ?? 100,
+        max_capacity_car: settings.max_capacity_car != null && settings.max_capacity_car !== ''
+          ? parseInt(settings.max_capacity_car, 10) || half
+          : half,
+        max_capacity_motorcycle:
+          settings.max_capacity_motorcycle != null && settings.max_capacity_motorcycle !== ''
+            ? parseInt(settings.max_capacity_motorcycle, 10) || Math.max(1, legacy - half)
+            : Math.max(1, legacy - half),
       });
-      setActiveCount(stats?.activeTickets ?? null);
+      setActiveByType({
+        car: stats?.activeCars ?? null,
+        motorcycle: stats?.activeMotorcycles ?? null,
+      });
     } catch {
       showError('Gagal memuat pengaturan umum');
     } finally {
@@ -235,10 +248,14 @@ const Settings = () => {
   const handleSaveGeneral = async () => {
     setSavingGeneral(true);
     try {
+      const capCar = Math.max(1, parseInt(generalSettings.max_capacity_car, 10) || 1);
+      const capMoto = Math.max(1, parseInt(generalSettings.max_capacity_motorcycle, 10) || 1);
       await adminService.updateSettings({
         parking_name: generalSettings.parking_name,
         parking_address: generalSettings.parking_address,
-        max_capacity: parseInt(generalSettings.max_capacity) || 100,
+        max_capacity_car: capCar,
+        max_capacity_motorcycle: capMoto,
+        max_capacity: capCar + capMoto,
       });
       invalidateSettingsCache();
       invalidateCache('settings');
@@ -484,9 +501,16 @@ const Settings = () => {
     return { dt, isPast: dt < new Date() };
   })();
 
-  const capacityPct = activeCount !== null
-    ? Math.min(Math.round((activeCount / (parseInt(generalSettings.max_capacity) || 100)) * 100), 100)
-    : null;
+  const capCarNum = Math.max(1, parseInt(generalSettings.max_capacity_car, 10) || 1);
+  const capMotoNum = Math.max(1, parseInt(generalSettings.max_capacity_motorcycle, 10) || 1);
+  const motoPct =
+    activeByType.motorcycle !== null
+      ? Math.min(Math.round((activeByType.motorcycle / capMotoNum) * 100), 100)
+      : null;
+  const carPct =
+    activeByType.car !== null
+      ? Math.min(Math.round((activeByType.car / capCarNum) * 100), 100)
+      : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-[#e8eef7] to-slate-100">
@@ -605,38 +629,72 @@ const Settings = () => {
                     </div>
                   </div>
                   <div className="p-5 space-y-4">
-                    <div className="flex items-start gap-5">
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Kapasitas Maksimum</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                          <i className="fas fa-motorcycle text-amber-600 mr-1" aria-hidden />
+                          Kapasitas motor
+                        </label>
                         <input
                           type="number" min="1" max="9999"
-                          value={generalSettings.max_capacity}
-                          onChange={(e) => updateGeneral('max_capacity', e.target.value)}
+                          value={generalSettings.max_capacity_motorcycle}
+                          onChange={(e) => updateGeneral('max_capacity_motorcycle', e.target.value)}
                           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
-                        <p className="text-xs text-gray-400 mt-1">Jumlah kendaraan maksimum yang boleh parkir bersamaan</p>
+                        <p className="text-xs text-gray-400 mt-1">Maks. sepeda motor aktif bersamaan</p>
                       </div>
-                      {activeCount !== null && (
-                        <div className="flex-shrink-0 mt-6 text-center">
-                          <div className={`w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 ${capacityPct >= 90 ? 'border-red-400 bg-red-50' :
-                            capacityPct >= 70 ? 'border-amber-400 bg-amber-50' : 'border-green-400 bg-green-50'
-                            }`}>
-                            <span className={`text-xl font-bold leading-none ${capacityPct >= 90 ? 'text-red-600' :
-                              capacityPct >= 70 ? 'text-amber-600' : 'text-green-600'
-                              }`}>{capacityPct}%</span>
-                            <span className="text-xs text-gray-500 mt-0.5">terisi</span>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1.5">
-                            {activeCount} / {parseInt(generalSettings.max_capacity) || 100}
-                          </p>
-                        </div>
-                      )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                          <i className="fas fa-car text-sky-600 mr-1" aria-hidden />
+                          Kapasitas mobil
+                        </label>
+                        <input
+                          type="number" min="1" max="9999"
+                          value={generalSettings.max_capacity_car}
+                          onChange={(e) => updateGeneral('max_capacity_car', e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">Maks. mobil aktif bersamaan</p>
+                      </div>
                     </div>
-                    {capacityPct >= 90 && (
+                    {(motoPct !== null || carPct !== null) && (
+                      <div className="flex flex-wrap gap-6 justify-center sm:justify-start pt-2">
+                        {motoPct !== null && (
+                          <div className="text-center">
+                            <div className={`w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 ${motoPct >= 90 ? 'border-red-400 bg-red-50' :
+                              motoPct >= 70 ? 'border-amber-400 bg-amber-50' : 'border-green-400 bg-green-50'
+                              }`}>
+                              <span className={`text-lg font-bold leading-none ${motoPct >= 90 ? 'text-red-600' :
+                                motoPct >= 70 ? 'text-amber-600' : 'text-green-600'
+                                }`}>{motoPct}%</span>
+                              <span className="text-[10px] text-gray-500 mt-0.5">motor</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1.5">
+                              {activeByType.motorcycle} / {capMotoNum}
+                            </p>
+                          </div>
+                        )}
+                        {carPct !== null && (
+                          <div className="text-center">
+                            <div className={`w-20 h-20 rounded-full flex flex-col items-center justify-center border-4 ${carPct >= 90 ? 'border-red-400 bg-red-50' :
+                              carPct >= 70 ? 'border-amber-400 bg-amber-50' : 'border-green-400 bg-green-50'
+                              }`}>
+                              <span className={`text-lg font-bold leading-none ${carPct >= 90 ? 'text-red-600' :
+                                carPct >= 70 ? 'text-amber-600' : 'text-green-600'
+                                }`}>{carPct}%</span>
+                              <span className="text-[10px] text-gray-500 mt-0.5">mobil</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1.5">
+                              {activeByType.car} / {capCarNum}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {((motoPct != null && motoPct >= 90) || (carPct != null && carPct >= 90)) && (
                       <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2 text-xs text-red-700">
                         <i className="fas fa-exclamation-triangle mr-1.5"></i>
-                        Kapasitas hampir penuh! Tiket baru akan diblokir saat mencapai{' '}
-                        {parseInt(generalSettings.max_capacity) || 100} kendaraan.
+                        Salah satu jenis kapasitas hampir penuh — tiket baru untuk tipe tersebut akan diblokir saat slot penuh.
                       </div>
                     )}
                   </div>

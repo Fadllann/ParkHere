@@ -38,6 +38,12 @@ const getVehicleBadgeColor = (type) => ({
   car: 'bg-sky-100 text-sky-800',
 }[type] || 'bg-gray-100 text-gray-700');
 
+const toImageUrl = (path) => {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  return path.startsWith('/') ? path : `/${path}`;
+};
+
 // Stable reference outside the component the cache layer uses this as the
 // fetcher but only actually calls it when the 20s TTL has expired.
 async function fetchActiveTicketsData() {
@@ -217,18 +223,14 @@ const ActiveTickets = () => {
   useEffect(() => {
     const loadEntryImage = async () => {
       if (showModal && selectedTicket) {
+        if (selectedTicket.entryImagePath) {
+          setEntryImageUrl(toImageUrl(selectedTicket.entryImagePath));
+          return;
+        }
         try {
-          const response = await ticketService.print(selectedTicket.id);
-          if (response.data.success && response.data.data.plateCaptures && response.data.data.plateCaptures.length > 0) {
-            const firstCapture = response.data.data.plateCaptures[0];
-            if (firstCapture.imagePath) {
-              setEntryImageUrl(`/${firstCapture.imagePath}`);
-            } else {
-              setEntryImageUrl(null);
-            }
-          } else {
-            setEntryImageUrl(null);
-          }
+          const response = await ticketService.get(selectedTicket.id);
+          const path = response.data?.data?.ticket?.entryImagePath;
+          setEntryImageUrl(toImageUrl(path));
         } catch (error) {
           console.error('Failed to load entry image:', error);
           setEntryImageUrl(null);

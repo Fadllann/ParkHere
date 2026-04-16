@@ -4,6 +4,7 @@ const { Ticket, Payment, PlateCapture, ActivityLog, Rate, Setting } = require('.
 const barcodeService = require('../services/barcodeService');
 const imageService = require('../services/imageService');
 const { recognizePlate } = require('../services/plateRecognition');
+const { getParkingCapacityLimits } = require('../utils/capacitySettings');
 
 const createTicketValidation = [
     body('plateNumber')
@@ -70,17 +71,20 @@ const createTicket = async (req, res, next) => {
             ? manualPlate.toUpperCase().replace(/\s+/g, '')
             : 'UNKNOWN';
 
-        // Capacity check
-        const [maxCapacity, activeCount] = await Promise.all([
-            Setting.get('max_capacity', 100),
-            Ticket.count({ where: { status: 'active' } })
-        ]);
+        // Capacity check (per vehicle type)
+        const caps = await getParkingCapacityLimits();
+        const type = vehicleType === 'motorcycle' ? 'motorcycle' : 'car';
+        const maxForType = type === 'motorcycle' ? caps.maxCapacityMotorcycle : caps.maxCapacityCar;
+        const activeForType = await Ticket.count({
+            where: { status: 'active', vehicleType: type }
+        });
 
-        if (activeCount >= parseInt(maxCapacity)) {
+        if (activeForType >= maxForType) {
+            const label = type === 'motorcycle' ? 'sepeda motor' : 'mobil';
             return res.status(409).json({
                 success: false,
-                message: `Kapasitas maksimum (${maxCapacity} kendaraan) telah tercapai.`,
-                data: { maxCapacity: parseInt(maxCapacity), activeCount }
+                message: `Kapasitas ${label} (${maxForType} slot) telah penuh.`,
+                data: { vehicleType: type, maxCapacity: maxForType, activeCount: activeForType }
             });
         }
 
@@ -152,6 +156,7 @@ const createTicket = async (req, res, next) => {
                     plateNumber: ticket.plateNumber,
                     vehicleType: ticket.vehicleType,
                     entryTime: ticket.entryTime,
+                    entryImagePath: ticket.entryImagePath,
                     barcodeData: ticket.barcodeData,
                     status: ticket.status
                 },
@@ -244,7 +249,7 @@ const getActiveTickets = async (req, res, next) => {
             where: { status: 'active' },
             order: [['entryTime', 'DESC']],
             limit: 100,
-            attributes: ['id', 'ticketNumber', 'plateNumber', 'vehicleType', 'entryTime', 'barcodeData', 'status']
+            attributes: ['id', 'ticketNumber', 'plateNumber', 'vehicleType', 'entryTime', 'barcodeData', 'status', 'entryImagePath']
         });
         res.json({
             success: true,
@@ -252,7 +257,8 @@ const getActiveTickets = async (req, res, next) => {
                 tickets: tickets.map(t => ({
                     id: t.id, ticketNumber: t.ticketNumber, plateNumber: t.plateNumber,
                     vehicleType: t.vehicleType, entryTime: t.entryTime,
-                    barcodeData: t.barcodeData, formattedDuration: formatDuration(t.entryTime)
+                    barcodeData: t.barcodeData, entryImagePath: t.entryImagePath,
+                    formattedDuration: formatDuration(t.entryTime)
                 })),
                 total: tickets.length
             }
@@ -306,6 +312,8 @@ const printTicket = async (req, res, next) => {
             data: {
                 id: ticket.id, ticketNumber: ticket.ticketNumber, plateNumber: ticket.plateNumber,
                 vehicleType: ticket.vehicleType, entryTime: ticket.entryTime,
+                entryImagePath: ticket.entryImagePath,
+                exitImagePath: ticket.exitImagePath,
                 barcodeData: ticket.barcodeData,
                 formattedDuration: formatDuration(ticket.entryTime), parkingName, parkingAddress
             }

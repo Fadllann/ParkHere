@@ -16,7 +16,7 @@ const CashierLog = sequelize.define('CashierLogA', {
         type: DataTypes.DECIMAL(12, 2),
         allowNull: false,
         validate: {
-            min: 0.01,
+            min: 0,
             notEmpty: true
         },
         comment: 'Transaction amount in Rupiah'

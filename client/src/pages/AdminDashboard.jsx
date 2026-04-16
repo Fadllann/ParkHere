@@ -25,6 +25,20 @@ const vehicleTypeMap = {
   car: 'Mobil',
   motorcycle: 'Sepeda Motor',
 };
+const EMERGENCY_DISMISS_KEY = 'entry_emergency_done_ids';
+
+const readDismissedEmergencyIds = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(EMERGENCY_DISMISS_KEY) || '[]');
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const writeDismissedEmergencyIds = (ids) => {
+  localStorage.setItem(EMERGENCY_DISMISS_KEY, JSON.stringify(Array.from(ids)));
+};
 
 // Raw fetcher passed into the cache layer
 async function fetchDashboardData() {
@@ -53,6 +67,7 @@ const AdminDashboard = () => {
 
   const [regulations, setRegulations] = useState(DEFAULT_REGULATIONS);
   const regulationsRef = useRef(DEFAULT_REGULATIONS);
+  const [dismissedEmergencyIds, setDismissedEmergencyIds] = useState(() => readDismissedEmergencyIds());
 
   // Dashboard fetch goes through the cache layer
   // if the data is < 30 seconds old. After 30s it silently refreshes.
@@ -86,6 +101,14 @@ const AdminDashboard = () => {
   // Mount: fetch data on page load
   useEffect(() => {
     loadDashboard();
+  }, [loadDashboard]);
+
+  // Light polling so emergencies show without manual refresh
+  useEffect(() => {
+    const t = setInterval(() => {
+      loadDashboard(true, false);
+    }, 25000);
+    return () => clearInterval(t);
   }, [loadDashboard]);
 
   // Close notif dropdown on outside click
@@ -137,6 +160,18 @@ const AdminDashboard = () => {
 
   if (loading) return <Loading fullScreen text="Memuat dashboard..." />;
 
+  const entryEmergencies = (stats?.entryEmergencies || []).filter((ev) => !dismissedEmergencyIds.has(ev.id));
+  const notifCount = lostTickets.length + entryEmergencies.length;
+
+  const markEmergenciesDone = () => {
+    if (entryEmergencies.length === 0) return;
+    const next = new Set(dismissedEmergencyIds);
+    entryEmergencies.forEach((ev) => next.add(ev.id));
+    setDismissedEmergencyIds(next);
+    writeDismissedEmergencyIds(next);
+    showSuccess(`${entryEmergencies.length} notifikasi darurat ditandai selesai`);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-[#e8eef7] to-slate-100">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
@@ -162,19 +197,52 @@ const AdminDashboard = () => {
                 <button
                   onClick={() => setShowNotifDropdown((v) => !v)}
                   className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                  title="Notifikasi tiket hilang"
+                  title="Notifikasi"
                 >
                   <i className="fas fa-bell text-gray-600 text-sm"></i>
-                  {lostTickets.length > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold leading-none">
-                      {lostTickets.length > 9 ? '9+' : lostTickets.length}
+                  {notifCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[1rem] h-4 px-0.5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold leading-none">
+                      {notifCount > 9 ? '9+' : notifCount}
                     </span>
                   )}
                 </button>
 
                 {showNotifDropdown && (
-                  <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-20 overflow-hidden">
-                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                  <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 z-20 overflow-hidden max-h-[min(70vh,520px)] flex flex-col">
+                    {entryEmergencies.length > 0 && (
+                      <>
+                        <div className="px-4 py-3 bg-rose-50 border-b border-rose-100 flex items-center justify-between shrink-0">
+                          <span className="font-semibold text-sm text-rose-900">
+                            <i className="fas fa-bell text-rose-600 mr-1.5"></i>Gerbang Masuk
+                          </span>
+                          <span className="text-xs text-rose-700">{entryEmergencies.length} darurat</span>
+                        </div>
+                        <div className="max-h-40 overflow-y-auto border-b border-gray-100">
+                          {entryEmergencies.slice(0, 6).map((ev) => (
+                            <div key={ev.id} className="px-4 py-2.5 border-b border-gray-50 text-xs">
+                              <p className="font-medium text-rose-800">Bantuan diminta di gerbang masuk</p>
+                              <p className="text-gray-500 mt-0.5">
+                                {ev.createdAt ? new Date(ev.createdAt).toLocaleString('id-ID') : ''}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                        <Link
+                          to="/auto-entry"
+                          onClick={() => setShowNotifDropdown(false)}
+                          className="block mx-4 my-3 text-center text-xs py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition-colors shrink-0"
+                        >
+                          Buka Gerbang Masuk
+                        </Link>
+                        <button
+                          onClick={() => { markEmergenciesDone(); setShowNotifDropdown(false); }}
+                          className="block mx-4 mb-3 text-center text-xs py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors shrink-0"
+                        >
+                          Mark as Done
+                        </button>
+                      </>
+                    )}
+                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
                       <span className="font-semibold text-sm text-gray-900">
                         <i className="fas fa-exclamation-circle text-red-500 mr-1.5"></i>Tiket Hilang
                       </span>
@@ -223,6 +291,36 @@ const AdminDashboard = () => {
           </div>
         </header>
 
+        {entryEmergencies.length > 0 && (
+          <div className="mx-5 mt-4 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center flex-shrink-0">
+                <i className="fas fa-exclamation-circle text-rose-600 text-sm"></i>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-rose-900">
+                  Darurat / gangguan di Gerbang Masuk
+                </p>
+                <p className="text-xs text-rose-700">
+                  {entryEmergencies.length} permintaan bantuan dari gerbang masuk. Segera ke lokasi masuk.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/auto-entry"
+              className="flex-shrink-0 text-xs font-medium px-3 py-1.5 bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition-colors"
+            >
+              Buka Gerbang Masuk
+            </Link>
+            <button
+              onClick={markEmergenciesDone}
+              className="flex-shrink-0 text-xs font-medium px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors"
+            >
+              Mark as Done
+            </button>
+          </div>
+        )}
+
         {/* Lost tickets banner */}
         {regulations.autoReport.enabled && lostTickets.length > 0 && !showReportModal && (
           <div className="mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
@@ -252,8 +350,32 @@ const AdminDashboard = () => {
             <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-500 text-xs">Kendaraan Aktif</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{stats?.activeTickets || 0}</p>
+                  <p className="text-gray-500 text-xs">Motor terpakai</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">{stats?.activeMotorcycles ?? 0}</p>
+                </div>
+                <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+                  <i className="fas fa-motorcycle text-amber-700"></i>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                  <div className="bg-gradient-to-r from-amber-600 to-amber-400 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(stats?.motorcycleOccupancyPercent || 0, 100)}%` }}></div>
+                </div>
+                <span className="text-xs text-gray-500">{stats?.motorcycleOccupancyPercent ?? 0}%</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                dari {stats?.maxCapacityMotorcycle ?? 0} slot motor
+                {stats?.availableSpotsMotorcycle != null && (
+                  <span className="text-emerald-600"> · sisa {stats.availableSpotsMotorcycle}</span>
+                )}
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-gray-500 text-xs">Mobil terpakai</p>
+                  <p className="text-2xl font-bold text-sky-700 mt-1">{stats?.activeCars ?? 0}</p>
                 </div>
                 <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center">
                   <i className="fas fa-car text-sky-700"></i>
@@ -261,23 +383,16 @@ const AdminDashboard = () => {
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                  <div className="bg-gradient-to-r from-[#1e3a5f] to-sky-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(stats?.occupancyPercent || 0, 100)}%` }}></div>
+                  <div className="bg-gradient-to-r from-[#1e3a5f] to-sky-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.min(stats?.carOccupancyPercent || 0, 100)}%` }}></div>
                 </div>
-                <span className="text-xs text-gray-500">{stats?.occupancyPercent || 0}%</span>
+                <span className="text-xs text-gray-500">{stats?.carOccupancyPercent ?? 0}%</span>
               </div>
-            </div>
-
-            <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-gray-500 text-xs">Slot Tersedia</p>
-                  <p className="text-2xl font-bold text-emerald-600 mt-1">{stats?.availableSpots || 0}</p>
-                </div>
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
-                  <i className="fas fa-parking text-emerald-700"></i>
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">dari {stats?.maxCapacity || 100}</p>
+              <p className="text-xs text-gray-500 mt-2">
+                dari {stats?.maxCapacityCar ?? 0} slot mobil
+                {stats?.availableSpotsCar != null && (
+                  <span className="text-emerald-600"> · sisa {stats.availableSpotsCar}</span>
+                )}
+              </p>
             </div>
 
             <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">

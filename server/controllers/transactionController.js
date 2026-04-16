@@ -16,7 +16,7 @@ const includeList = () => [
             {
                 model: Ticket,
                 as: 'ticket',
-                attributes: ['ticketNumber', 'plateNumber', 'vehicleType', 'exitImagePath']
+                attributes: ['ticketNumber', 'plateNumber', 'vehicleType', 'entryImagePath', 'exitImagePath']
             }
         ]
     }

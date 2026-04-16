@@ -55,6 +55,11 @@ export const ticketService = {
     cancel: (id) => api.delete(`/tickets/${id}`)
 };
 
+/** Public — Gerbang Masuk */
+export const entryService = {
+    postEmergency: () => api.post('/entry/emergency')
+};
+
 export const paymentService = {
     calculate: (params) => {
         if (params?.barcodeData != null && String(params.barcodeData).length > 0) {

@@ -43,6 +43,7 @@ async function createLedgerRow(values, outerTransaction) {
         const row = await CashierLog.create(
             {
                 ...values,
+                isVerified: values.isVerified !== undefined ? values.isVerified : true,
                 balanceAfter
             },
             { transaction: t }
@@ -58,15 +59,17 @@ async function createLedgerRow(values, outerTransaction) {
 /**
  * Idempotent income from payment (findOrCreate by paymentId).
  * Returns { row, created }.
+ * Pass `transaction` to join an outer sequelize transaction (e.g. payment flow).
  */
 async function recordIncomeFromPayment({
     payment,
     createdBy,
     description,
-    referenceId
+    referenceId,
+    transaction: outerTransaction
 }) {
     const amount = parseFloat(payment.amount);
-    return sequelize.transaction(async (t) => {
+    const run = async (t) => {
         const existing = await CashierLog.findOne({
             where: { paymentId: payment.id },
             transaction: t
@@ -85,12 +88,17 @@ async function recordIncomeFromPayment({
                 referenceId: referenceId || String(payment.id),
                 createdBy: createdBy || null,
                 paymentId: payment.id,
-                balanceAfter
+                balanceAfter,
+                isVerified: true
             },
             { transaction: t }
         );
         return { row, created: true };
-    });
+    };
+    if (outerTransaction) {
+        return run(outerTransaction);
+    }
+    return sequelize.transaction(run);
 }
 
 /**
