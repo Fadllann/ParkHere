@@ -53,7 +53,7 @@ const calculateParkingFee = async (durationMinutes, vehicleType, isLostTicket = 
 
     // Calculate billable hours
     const billableMinutes = durationMinutes - gracePeriod;
-    const hours = Math.floor(billableMinutes / 60);
+    const hours = Math.ceil(billableMinutes / 60);
     const days = Math.floor(hours / 24);
     const remainingHours = hours % 24;
 

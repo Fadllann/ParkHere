@@ -17,7 +17,19 @@ const cashierService = require('../services/cashierService');
 
 // Validation rules
 const processPaymentValidation = [
-    body('ticketId').isInt().withMessage('Tiket ID tidak valid'),
+    body('ticketId')
+        .optional({ nullable: true })
+        .custom((value, { req }) => {
+            // Lost-ticket flow does not have a real ticket row yet.
+            if (req.body?.isLostTicket) return true;
+            if (value === undefined || value === null || value === '') {
+                throw new Error('Tiket ID wajib diisi');
+            }
+            if (!Number.isInteger(Number(value))) {
+                throw new Error('Tiket ID tidak valid');
+            }
+            return true;
+        }),
     body('paymentMethod')
         .isIn(['cash', 'card', 'digital'])
         .withMessage('Metode pembayaran tidak valid'),

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import Quagga from '@ericblade/quagga2';
 import Webcam from 'react-webcam';
-import { paymentService, ticketService } from '../services/api';
+import { adminService, paymentService, ticketService } from '../services/api';
 import { showSuccess, showError, showLoading, closeLoading, showConfirm } from '../utils/alerts';
 
 const Exit = () => {
@@ -25,6 +25,12 @@ const Exit = () => {
     const [isLostTicket, setIsLostTicket] = useState(false);
     const [selectedLostVehicleType, setSelectedLostVehicleType] = useState(null);
     const [lostTicketFeeAmount, setLostTicketFeeAmount] = useState(0);
+    const [lostTicketFees, setLostTicketFees] = useState({
+        car: null,
+        motorcycle: null,
+        global: 200000,
+        loaded: false
+    });
 
     // Cashier States
     const [cashReceived, setCashReceived] = useState('');
@@ -93,6 +99,43 @@ const Exit = () => {
             amountInputRef.current.focus();
         }
     }, [step]);
+
+    // Fetch lost-ticket fee config once and cache in state
+    useEffect(() => {
+        let active = true;
+        const loadLostTicketFees = async () => {
+            try {
+                const [ratesRes, settingsRes] = await Promise.all([
+                    adminService.getRates(),
+                    adminService.getSettings()
+                ]);
+                if (!active) return;
+
+                const rates = ratesRes.data?.data?.rates || [];
+                const settings = settingsRes.data?.data?.settings || {};
+                const globalFee = parseInt(settings.globalLostTicketFee, 10) || 200000;
+
+                const carRate = rates.find((r) => r.vehicleType === 'car');
+                const motorcycleRate = rates.find((r) => r.vehicleType === 'motorcycle');
+
+                setLostTicketFees({
+                    car: parseInt(carRate?.lostTicketFee, 10) || null,
+                    motorcycle: parseInt(motorcycleRate?.lostTicketFee, 10) || null,
+                    global: globalFee,
+                    loaded: true
+                });
+            } catch (error) {
+                if (!active) return;
+                // Keep working with fallback fee if config endpoints fail.
+                setLostTicketFees((prev) => ({ ...prev, loaded: true }));
+            }
+        };
+
+        loadLostTicketFees();
+        return () => {
+            active = false;
+        };
+    }, []);
 
     // Calculate change dynamically when cashReceived changes
     useEffect(() => {
@@ -277,10 +320,10 @@ const Exit = () => {
     // Handle lost ticket selection
     const handleSelectLostVehicleType = async (vehicleType) => {
         setSelectedLostVehicleType(vehicleType);
-        // Calculate lost ticket fee - for now use a default or fetch from rates
-        // This would normally query GET /admin/rates for the vehicleType
-        const defaultLostFees = { car: 300000, motorcycle: 200000 };
-        setLostTicketFeeAmount(defaultLostFees[vehicleType] || 200000);
+        const feeFromVehicle =
+            vehicleType === 'car' ? lostTicketFees.car : lostTicketFees.motorcycle;
+        const effectiveFee = feeFromVehicle || lostTicketFees.global || 200000;
+        setLostTicketFeeAmount(effectiveFee);
     };
 
     const handlePrint = () => {
