@@ -1,1 +1,41 @@
+# Local database volumes
 mysql-data/
+
+# Local environment secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Dependency and build output
+node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+
+# General logs
+*.log
+
+# Keep runtime folders in the repo, but leave them empty
+debug_frames/*
+!debug_frames/.gitkeep
+
+server/uploads/*
+!server/uploads/.gitkeep
+server/uploads/exit/*
+!server/uploads/exit/.gitkeep
+server/uploads/plates/*
+!server/uploads/plates/.gitkeep
+
+server/logs/*
+!server/logs/.gitkeep
+
+server/temp-backups/*
+!server/temp-backups/.gitkeep

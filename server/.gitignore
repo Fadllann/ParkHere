@@ -1,1 +1,17 @@
 node_modules/
+.env
+.env.*
+*.log
+
+uploads/*
+!uploads/.gitkeep
+uploads/exit/*
+!uploads/exit/.gitkeep
+uploads/plates/*
+!uploads/plates/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+temp-backups/*
+!temp-backups/.gitkeep
